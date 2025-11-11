@@ -9,6 +9,7 @@ void setup() {
 }
 
 void loop() {
+  printf("");
   // put your main code here, to run repeatedly:
 }
 
