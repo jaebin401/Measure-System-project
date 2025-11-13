@@ -1,19 +1,48 @@
 #include <Arduino.h>
+#include <LiquidCrystal_I2C.h>
 
-// put function declarations here:
-int myFunction(int, int);
+LiquidCrystal_I2C lcd(0x27, 16, 2); 
 
-void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
+// button setting
+const int buttonPin = 2;
+const int buzzerPin = 8;
+int lastButtonState = HIGH;
+int currentButtonState = digitalRead(buttonPin);
+
+bool isClick()
+{
+  if (currentButtonState == LOW && lastButtonState == HIGH) {
+    Serial.println("버튼 눌림!"); 
+
+    digitalWrite(buzzerPin, HIGH);
+    delay(100);
+    digitalWrite(buzzerPin, LOW);
+  }
+  
+  lastButtonState = currentButtonState;
+  return currentButtonState;
 }
 
-void loop() {
-  printf("");
-  // put your main code here, to run repeatedly:
+void setup()
+{
+  // lcd setting
+  lcd.init();				
+  lcd.clear();         		
+  lcd.backlight(); 		
+  
+  lcd.setCursor(2,0); 		
+  lcd.print("hello world"); 
+
+  // button
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
+
+  // Serial Monitor Initialization
+  Serial.begin(9600);
 }
 
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+void loop()
+{
+
 }
+
