@@ -80,7 +80,8 @@ class DebouncedButton
 DebouncedButton* buttonA;
 DebouncedButton* buttonB;
 
-void setup() {
+void setup() 
+{
   Serial.begin(9600);
   
   buttonA = new DebouncedButton(BUTTON_A_PIN);
@@ -92,31 +93,32 @@ void setup() {
   buttonA->begin();
   buttonB->begin();
 
-  Serial.println("==== Serial initialization =====");
+  Serial.println("===== Serial initialization =====");
   Serial.print("Current mode: ");
   Serial.println(mode);
 }
 
-void loop() {
+void loop() 
+{
   bool A_pressed = buttonA->checkPressed();
   bool B_pressed = buttonB->checkPressed();
 
-  if (A_pressed) {
+  if (A_pressed) 
+  {
     mode++;
     Serial.print("Button A clicked, currne mode: ");
     Serial.println(mode);
   }
 
-  if (B_pressed) {
+  if (B_pressed) 
+  {
     mode--;
-    if (mode < 0) {
-      mode = TOTAL_MODES - 1;
-    }
     Serial.print("Button B clicked, current mode: ");
     Serial.println(mode);
   }
 
-  switch (mode) {
+  switch (mode) 
+  {
     case 0:
       break;
     case 1:
