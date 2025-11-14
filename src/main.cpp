@@ -7,30 +7,31 @@
 int mode = 0;
 const int TOTAL_MODES = 3;
 
-class DebouncedButton {
+class DebouncedButton 
+{
     private:
-    uint8_t _pin;
-    long _debounceDelay;
-    long _lastDebounceTime;
-    int _buttonState;
-    int _lastButtonState;
+        uint8_t _pin;
+        long _debounceDelay;
+        long _lastDebounceTime;
+        int _buttonState;
+        int _lastButtonState;
 
-    uint8_t _buzzerPin;
-    int _buzzerTone;
-    int _buzzerDuration;
+        uint8_t _buzzerPin;
+        int _buzzerTone;
+        int _buzzerDuration;
 
     public:
-    DebouncedButton(uint8_t pin) 
-    {
-        _pin = pin;
-        _debounceDelay = 50;
-        _lastDebounceTime = 0;
-        _buttonState = HIGH;
-        _lastButtonState = HIGH;
-        _buzzerPin = 0;
-        _buzzerTone = 0;
-        _buzzerDuration = 0;
-    }
+        DebouncedButton(uint8_t pin) 
+        {
+            _pin = pin;
+            _debounceDelay = 50;
+            _lastDebounceTime = 0;
+            _buttonState = HIGH;
+            _lastButtonState = HIGH;
+            _buzzerPin = 0;
+            _buzzerTone = 0;
+            _buzzerDuration = 0;
+        }
 
     void begin() 
     {
@@ -91,8 +92,8 @@ void setup() {
   buttonA->begin();
   buttonB->begin();
 
-  Serial.println("--- 버튼 뼈대 코드 (v3) ---");
-  Serial.print("현재 모드: ");
+  Serial.println("==== Serial initialization =====");
+  Serial.print("Current mode: ");
   Serial.println(mode);
 }
 
@@ -101,17 +102,17 @@ void loop() {
   bool B_pressed = buttonB->checkPressed();
 
   if (A_pressed) {
-    mode = (mode + 1) % TOTAL_MODES;
-    Serial.print("Button A! (UP) 현재 모드: ");
+    mode++;
+    Serial.print("Button A clicked, currne mode: ");
     Serial.println(mode);
   }
 
   if (B_pressed) {
-    mode = mode - 1;
+    mode--;
     if (mode < 0) {
       mode = TOTAL_MODES - 1;
     }
-    Serial.print("Button B! (DOWN) 현재 모드: ");
+    Serial.print("Button B clicked, current mode: ");
     Serial.println(mode);
   }
 
