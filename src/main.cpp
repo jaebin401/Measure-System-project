@@ -10,7 +10,7 @@
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 int mode = 0;
-float angle = 0.0;
+float SetAngle = 0.0;
 const int TOTAL_MODES = 3;
 
 class DebouncedButton 
@@ -94,7 +94,7 @@ void updateLcdDisplay()
   switch (mode) 
   {
     case 0:
-      lcd.print("Angle: ");   
+      lcd.print("== Set angle ==");   
       break;
     case 1:
       lcd.print("== Menu ==");
@@ -132,6 +132,7 @@ void loop()
   bool A_pressed = buttonA->checkPressed();
   bool B_pressed = buttonB->checkPressed();
 
+  /*
   if (A_pressed) 
   {
     mode++;
@@ -147,28 +148,32 @@ void loop()
     Serial.println(mode);
     updateLcdDisplay();
   }
+  */
 
   switch (mode) 
   {
     case 0:
+    // angle 자료형 추후 변경 논의 필요 (float -> int) 
     {
       float potVal = analogRead(POT_PIN);
-      angle = map(potVal, 0, 1023, 0, 300) / 10.0;
+      float angle = map(potVal, 0, 1023, 0, 300) / 10.0;
 
-      lcd.setCursor(7, 0);
+      lcd.setCursor(1, 1);
+      lcd.print("Angle: ");
+      
+      lcd.setCursor(8, 1);
       lcd.print(angle, 1);
-
-      lcd.setCursor(0, 1);
-      lcd.print("set your angle");
 
       if (A_pressed) 
       {
         mode++;
         Serial.print("Button A clicked, currne mode: ");
         Serial.println(mode);
+        SetAngle = angle;
+        Serial.print("setting angle:");
+        Serial.print(SetAngle);
         updateLcdDisplay();
       }
-
       break;
     }
 
