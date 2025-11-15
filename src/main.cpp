@@ -87,10 +87,7 @@ void updateLcdDisplay()
 {
   lcd.clear(); 
   lcd.setCursor(0, 0); 
-  //lcd.print("Mode: ");
-  //lcd.print(mode);
 
-  //lcd.setCursor(0, 1); 
   switch (mode) 
   {
     case 0:
@@ -100,7 +97,6 @@ void updateLcdDisplay()
       lcd.print("Angle: "); 
       break;
     case 2:
-      //lcd.print("Gyro Z: "); 
       break;
   }
   lcd.setCursor(0, 1); 
@@ -152,7 +148,6 @@ void loop()
   switch (mode) 
   {
     case 0:
-      
       lcd.print("from loop - 0");
       break;
     case 1:
@@ -160,8 +155,6 @@ void loop()
       break;
     case 2:
       lcd.print("from loop - 2");
-      break;
-    default:
       break;
   }
   
