@@ -1,21 +1,24 @@
 #include <Arduino.h>
 #include <LiquidCrystal_I2C.h>
+#include <Wire.h>
 
 #define BUTTON_A_PIN 2
 #define BUTTON_B_PIN 3
 #define BUZZER_PIN 9
+#define POT_PIN A1
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 int mode = 0;
+float angle = 0.0;
 const int TOTAL_MODES = 3;
 
 class DebouncedButton 
 {
     private:
         uint8_t _pin;
-        long _debounceDelay;
-        long _lastDebounceTime;
+        unsigned long _debounceDelay;
+        unsigned long _lastDebounceTime;
         int _buttonState;
         int _lastButtonState;
 
@@ -91,15 +94,15 @@ void updateLcdDisplay()
   switch (mode) 
   {
     case 0:
-      lcd.print("== Main Menu ==");
+      lcd.print("Angle: ");   
       break;
     case 1:
-      lcd.print("Angle: "); 
+      lcd.print("== Menu ==");
       break;
     case 2:
       break;
   }
-  lcd.setCursor(0, 1); 
+  
 }
 
 void setup() 
@@ -148,11 +151,32 @@ void loop()
   switch (mode) 
   {
     case 0:
-      lcd.print("from loop - 0");
+    {
+      float potVal = analogRead(POT_PIN);
+      angle = map(potVal, 0, 1023, 0, 300) / 10.0;
+
+      lcd.setCursor(7, 0);
+      lcd.print(angle, 1);
+
+      lcd.setCursor(0, 1);
+      lcd.print("set your angle");
+
+      if (A_pressed) 
+      {
+        mode++;
+        Serial.print("Button A clicked, currne mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+
       break;
+    }
+
     case 1:
+      lcd.setCursor(0, 1);
       lcd.print("from loop - 1");
       break;
+
     case 2:
       lcd.print("from loop - 2");
       break;
