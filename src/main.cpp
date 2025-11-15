@@ -1,8 +1,11 @@
 #include <Arduino.h>
+#include <LiquidCrystal_I2C.h>
 
 #define BUTTON_A_PIN 2
 #define BUTTON_B_PIN 3
 #define BUZZER_PIN 9
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 int mode = 0;
 const int TOTAL_MODES = 3;
@@ -80,10 +83,31 @@ class DebouncedButton
 DebouncedButton* buttonA;
 DebouncedButton* buttonB;
 
+void updateLcdDisplay() 
+{
+  lcd.clear(); 
+  lcd.setCursor(0, 0); 
+  //lcd.print("Mode: ");
+  //lcd.print(mode);
+
+  //lcd.setCursor(0, 1); 
+  switch (mode) 
+  {
+    case 0:
+      lcd.print("== Main Menu ==");
+      break;
+    case 1:
+      lcd.print("Angle: "); 
+      break;
+    case 2:
+      //lcd.print("Gyro Z: "); 
+      break;
+  }
+  lcd.setCursor(0, 1); 
+}
+
 void setup() 
 {
-  Serial.begin(9600);
-  
   buttonA = new DebouncedButton(BUTTON_A_PIN);
   buttonB = new DebouncedButton(BUTTON_B_PIN);
 
@@ -93,6 +117,12 @@ void setup()
   buttonA->begin();
   buttonB->begin();
 
+  Wire.begin();
+  lcd.init();
+  lcd.backlight();
+  updateLcdDisplay();
+
+  Serial.begin(9600);
   Serial.println("===== Serial initialization =====");
   Serial.print("Current mode: ");
   Serial.println(mode);
@@ -108,6 +138,7 @@ void loop()
     mode++;
     Serial.print("Button A clicked, currne mode: ");
     Serial.println(mode);
+    updateLcdDisplay();
   }
 
   if (B_pressed) 
@@ -115,15 +146,20 @@ void loop()
     mode--;
     Serial.print("Button B clicked, current mode: ");
     Serial.println(mode);
+    updateLcdDisplay();
   }
 
   switch (mode) 
   {
     case 0:
+      
+      lcd.print("from loop - 0");
       break;
     case 1:
+      lcd.print("from loop - 1");
       break;
     case 2:
+      lcd.print("from loop - 2");
       break;
     default:
       break;
