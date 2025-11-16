@@ -132,27 +132,9 @@ void loop()
   bool A_pressed = buttonA->checkPressed();
   bool B_pressed = buttonB->checkPressed();
 
-  /*
-  if (A_pressed) 
-  {
-    mode++;
-    Serial.print("Button A clicked, currne mode: ");
-    Serial.println(mode);
-    updateLcdDisplay();
-  }
-
-  if (B_pressed) 
-  {
-    mode--;
-    Serial.print("Button B clicked, current mode: ");
-    Serial.println(mode);
-    updateLcdDisplay();
-  }
-  */
-
   switch (mode) 
   {
-    case 0:
+    case 0: // setting angle mode
     // angle 자료형 추후 변경 논의 필요 (float -> int) 
     {
       float potVal = analogRead(POT_PIN);
@@ -177,7 +159,7 @@ void loop()
       break;
     }
 
-    case 1:
+    case 1: // hall sensor calibration mode
       lcd.setCursor(0, 1);
       lcd.print("from loop - 1");
       break;
