@@ -11,7 +11,6 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 int mode = 0;
 float SetAngle = 0.0;
-const int TOTAL_MODES = 3;
 
 class DebouncedButton 
 {
@@ -97,10 +96,15 @@ void updateLcdDisplay()
       lcd.print("== Set angle ==");   
       break;
     case 1:
-      lcd.print("== Menu ==");
+      lcd.print("== mode 1 ==");
       break;
     case 2:
+      lcd.print("== mode 2 ==");
       break;
+    case 3:
+      lcd.print("== mode 3 ==");
+      break;
+
   }
   
 }
@@ -138,7 +142,7 @@ void loop()
     // angle 자료형 추후 변경 논의 필요 (float -> int) 
     {
       float potVal = analogRead(POT_PIN);
-      float angle = map(potVal, 0, 1023, 0, 300) / 10.0;
+      float angle = map(potVal, 0, 1020, 0, 300) / 10.0;
 
       lcd.setCursor(1, 1);
       lcd.print("Angle: ");
@@ -161,12 +165,64 @@ void loop()
 
     case 1: // hall sensor calibration mode
       lcd.setCursor(0, 1);
-      lcd.print("from loop - 1");
+      lcd.print("from case - 1");
+      if (A_pressed) 
+      {
+        mode++;
+        Serial.print("Button A clicked, currne mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+
+      if (B_pressed) 
+      {
+        mode--;
+        Serial.print("Button B clicked, current mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
       break;
 
     case 2:
-      lcd.print("from loop - 2");
+      lcd.setCursor(0, 1);
+      lcd.print("from case - 2");
+      if (A_pressed) 
+      {
+        mode++;
+        Serial.print("Button A clicked, currne mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+
+      if (B_pressed) 
+      {
+        mode--;
+        Serial.print("Button B clicked, current mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
       break;
+      
+    case 3:
+      lcd.setCursor(0, 1);
+      lcd.print("from case - 3");
+      if (A_pressed) 
+      {
+        mode = 0;
+        Serial.print("Button A clicked, currne mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+
+      if (B_pressed) 
+      {
+        mode--;
+        Serial.print("Button B clicked, current mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+      break;
+
   }
   
   delay(10); 
