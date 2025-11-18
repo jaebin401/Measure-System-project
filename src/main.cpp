@@ -96,7 +96,7 @@ void updateLcdDisplay()
       lcd.print("== Set angle ==");   
       break;
     case 1:
-      lcd.print("== mode 1 ==");
+      lcd.print("== which mode? ==");
       break;
     case 2:
       lcd.print("== mode 2 ==");
@@ -136,6 +136,8 @@ void loop()
   bool A_pressed = buttonA->checkPressed();
   bool B_pressed = buttonB->checkPressed();
 
+  static int mode1_selection = 0;
+
   switch (mode) 
   {
     case 0: // setting angle mode
@@ -145,9 +147,9 @@ void loop()
       float angle = map(potVal, 0, 1020, 0, 300) / 10.0;
 
       lcd.setCursor(1, 1);
-      lcd.print("Angle: ");
+      lcd.print(" Angle: ");
       
-      lcd.setCursor(8, 1);
+      lcd.setCursor(9, 1);
       lcd.print(angle, 1);
 
       if (A_pressed) 
@@ -163,27 +165,54 @@ void loop()
       break;
     }
 
-    case 1: // hall sensor calibration mode
-      lcd.setCursor(0, 1);
-      lcd.print("from case - 1");
-      if (A_pressed) 
+    case 1:
+      // --- 1. LCD 디스플레이 로직 (선택 반전 효과) ---
+      lcd.setCursor(0, 1); // 2번째 줄로 이동
+      
+      if (mode1_selection == 0) // 'Hall'이 선택된 경우
       {
-        mode++;
-        Serial.print("Button A clicked, currne mode: ");
-        Serial.println(mode);
-        updateLcdDisplay();
+        lcd.print("[Hall] |  Photo ");
+      } 
+      else // 'Photo'가 선택된 경우
+      {
+        lcd.print(" Hall  | [Photo] ");
+
       }
 
+      // --- 2. 버튼 A 로직 (Hall 선택/확인) ---
       if (B_pressed) 
       {
-        mode--;
-        Serial.print("Button B clicked, current mode: ");
-        Serial.println(mode);
-        updateLcdDisplay();
+        if (mode1_selection == 0) // 'Hall'이 이미 선택된 상태에서 A를 누름 (확인)
+        {
+            mode = 2; // 'Hall' 모드(mode 2)로 이동
+            Serial.print("Button A confirmed, current mode: ");
+            Serial.println(mode);
+            updateLcdDisplay();
+        } 
+        else // 'Photo'가 선택된 상태에서 A를 누름 (선택 변경)
+        {
+            mode1_selection = 0; // 'Hall'을 선택
+        }
+      }
+
+      // --- 3. 버튼 B 로직 (Photo 선택/확인) ---
+      if (A_pressed) 
+      {
+        if (mode1_selection == 1) // 'Photo'가 이미 선택된 상태에서 B를 누름 (확인)
+        {
+            mode = 3; // 'Photo' 모드(mode 3)로 이동
+            Serial.print("Button B confirmed, current mode: ");
+            Serial.println(mode);
+            updateLcdDisplay();
+        }
+        else // 'Hall'이 선택된 상태에서 B를 누름 (선택 변경)
+        {
+            mode1_selection = 1; // 'Photo'를 선택
+        }
       }
       break;
-
-    case 2:
+    
+    case 2: // hall sensor calibration mode
       lcd.setCursor(0, 1);
       lcd.print("from case - 2");
       if (A_pressed) 
