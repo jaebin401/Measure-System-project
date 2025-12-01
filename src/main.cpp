@@ -128,7 +128,7 @@ void setup()
   lcd.init();
   lcd.backlight();
   //
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("===== Serial initialization =====");
 
   // as5600 연결 확인
@@ -153,7 +153,6 @@ void loop()
 
   static int mode1_selection = 0;
 
-  
   static int mode2_step = 0; 
   static float angleOffset = 0.0; 
   static unsigned long stableStartTime = 0; 
@@ -162,7 +161,6 @@ void loop()
   static unsigned long countdownStartTime = 0; 
   static int countdown = 3; 
   
-
   switch (mode) 
   {
     case 0: // setting angle mode
@@ -240,38 +238,116 @@ void loop()
       break;
     
     case 2: // hall sensor calibration mode
+    {
+      // --- [수정] 캘리브레이션 워크플로우 구현 ---
+
+      // 1. AS5600에서 원시 각도 읽기 (항상)
+      int rawAngle = as5600.readAngle();
+      float currentAngle = (float)rawAngle * 360.0 / 4096.0;
+
+      // --- Step 0: (진입) 캘리브레이션 시작 대기 ---
+      if (mode2_step == 0)
       {
-        // 1. AS5600에서 원시 각도 읽기 (0-4095)
-        int rawAngle = as5600.readAngle();
-        // 2. 0-360.0도 범위로 변환
-        float currentAngle = (float)rawAngle * 360.0 / 4096.0;
-
-        // 3. LCD 두 번째 줄에 각도 출력
         lcd.setCursor(0, 1);
-        lcd.print("Angle: ");
-        lcd.print(currentAngle, 2); // 소수점 2자리까지
-        lcd.print(" deg  "); // 잔상 제거
+        lcd.print("Raw: ");
+        lcd.print(currentAngle, 2);
+        lcd.print(" deg  ");
 
-        // '앞으로 가기' 버튼
+        // (1. 워크플로우) A 버튼 클릭 시 캘리브레이션 대기 시작
         if (A_pressed) 
         {
-          mode++;
-          Serial.print("Button A clicked, currne mode: ");
-          Serial.println(mode);
-          updateLcdDisplay();
+          mode2_step = 1; // 캘리브레이션 대기 단계로 이동
+          stableStartTime = millis(); // 타이머 리셋
+          lastStableValue = currentAngle; // 현재 값으로 안정화 기준 설정
+          lcd.setCursor(0, 1);
+          lcd.print("Waiting static...");
+          Serial.println("Calibration step 1: Waiting for static...");
         }
 
-        // '뒤로 가기' 버튼
+        // '뒤로 가기' 버튼 (이 단계에선 B만 활성화)
         if (B_pressed) 
         {
           mode--; // mode 1 (선택 화면)으로 이동
           Serial.print("Button B clicked, current mode: ");
           Serial.println(mode);
           updateLcdDisplay();
+          // mode2_step = 0; // (어차피 0임)
+        }
+      }
+      
+      // --- Step 1: (대기) 2초간 정수 각도 정지 감지 ---
+      else if (mode2_step == 1)
+      {
+        // (2. 워크플로우) 이 단계에서는 A/B 버튼 입력을 의도적으로 무시
+        
+        // '정수' 각도만 비교
+        int currentIntAngle = (int)currentAngle;
+        int lastIntAngle = (int)lastStableValue;
+
+        // 정수 각도가 변경되면 타이머 리셋
+        if (currentIntAngle != lastIntAngle) 
+        {
+          stableStartTime = millis(); // 타이머 리셋
+          lastStableValue = currentAngle; // 기준 값 갱신
+          // lcd.print("Waiting static..."); // 메시지 유지
         }
 
-        break;
+        // 2초간 정지했는지 확인
+        if (millis() - stableStartTime > 2000) 
+        {
+          angleOffset = currentAngle; // [영점 설정] 현재 각도를 0점(offset)으로 저장
+          mode2_step = 2; // (3) 캘리브레이션 완료 단계로 이동
+          Serial.print("Zero point set at: "); Serial.println(angleOffset);
+          lcd.setCursor(0, 1);
+          lcd.print("Calibrated!     ");
+          delay(1000); // 사용자가 메시지를 볼 수 있도록 잠시 대기
+        }
       }
+
+      // --- Step 2: (완료) 보정된 각도(+/-) 출력 ---
+      else if (mode2_step == 2)
+      {
+        // 1. 보정된 각도 계산 (currentAngle - angleOffset)
+        float calibratedAngle = currentAngle - angleOffset;
+
+        // 2. Wrap-around 처리 (각도를 -180 ~ +180 범위로)
+        if (calibratedAngle > 180.0) {
+          calibratedAngle -= 360.0; // 예: (350 - 0) = 350  -> -10
+        } else if (calibratedAngle < -180.0) {
+          calibratedAngle += 360.0; // 예: (10 - 350) = -340 -> +20
+        }
+        
+        // (센서의 시계방향(+) 설정은 하드웨어 방향에 따라 결정됩니다)
+        
+        // 3. LCD에 튜닝된 각도 출력
+        lcd.setCursor(0, 1);
+        lcd.print("Angle: ");
+        if (calibratedAngle > 0) lcd.print("+"); // + 부호 표시
+        lcd.print(calibratedAngle, 2);
+        lcd.print(" deg  ");
+
+        // (3. 워크플로우) 캘리브레이션 완료 후 버튼 활성화
+        if (A_pressed) 
+        {
+          mode++;
+          Serial.print("Button A clicked, currne mode: ");
+          Serial.println(mode);
+          updateLcdDisplay();
+          // mode2_step = 0; // (어차피 case 0에서 리셋됨)
+        }
+
+        if (B_pressed) 
+        {
+          mode--; // mode 1 (선택 화면)으로 이동
+          Serial.print("Button B clicked, current mode: ");
+          Serial.println(mode);
+          updateLcdDisplay();
+          // mode2_step = 0; // (어차피 case 1에서 리셋됨)
+        }
+      }
+      
+      break; // case 2의 break
+    }
       
     case 3:
       lcd.setCursor(0, 1);
