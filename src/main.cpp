@@ -15,6 +15,10 @@ AS5600 as5600;
 int mode = 0;
 float SetAngle = 0.0;
 
+// 관성모멘트 계산 물리량
+float mass_kg = 0.0;     // 예시 질량 값 (kg)
+float distance_m = 0.0;  // 예시 거리 값 (m)
+
 class DebouncedButton 
 {
     private:
@@ -107,6 +111,9 @@ void updateLcdDisplay()
     case 3:
       lcd.print("== mode 3 ==");
       break;
+    case 4:
+      lcd.print("== Set M & D ==");
+      break;
 
   }
   
@@ -155,10 +162,7 @@ void loop()
   static int mode2_step = 0; 
   static float angleOffset = 0.0; 
   static unsigned long stableStartTime = 0; 
-  static float lastStableValue = -1.0; 
-  static unsigned long lastBuzzerTime = 0; 
-  static unsigned long countdownStartTime = 0; 
-  static int countdown = 3; 
+  static float lastStableValue = -1.0;
   
   switch (mode) 
   {
@@ -190,7 +194,6 @@ void loop()
     }
 
     case 1:
-      // --- 1. LCD 디스플레이 로직 (선택 반전 효과) ---
       lcd.setCursor(0, 1); // 2번째 줄로 이동
       
       if (mode1_selection == 0) // 'Hall'이 선택된 경우
@@ -353,7 +356,7 @@ void loop()
       lcd.print("from case - 3");
       if (A_pressed) 
       {
-        mode = 0;
+        mode++;
         Serial.print("Button A clicked, currne mode: ");
         Serial.println(mode);
         updateLcdDisplay();
@@ -367,6 +370,41 @@ void loop()
         updateLcdDisplay();
       }
       break;
+    
+    case 4:
+    {
+      
+      // 1. LCD에 현재 설정된 값(예시 값) 출력
+      lcd.setCursor(0, 0); // 1행
+      lcd.print("M: ");
+      lcd.print(mass_kg, 2); // 예: 1.50
+      lcd.print(" kg");
+      lcd.print("        "); // 잔상 제거
+
+      lcd.setCursor(0, 1); // 2행
+      lcd.print("D: ");
+      lcd.print(distance_m, 2); // 예: 0.25
+      lcd.print(" m");
+      lcd.print("         "); // 잔상 제거
+      
+      // 2. 버튼 로직
+      if (A_pressed) 
+      {
+        mode = 0; // 완료. 처음(mode 0)으로 순환
+        Serial.print("Button A clicked, currne mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+
+      if (B_pressed) 
+      {
+        mode--; // '뒤로 가기' (mode 3)
+        Serial.print("Button B clicked, current mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+      break;
+    }
 
   }
   
