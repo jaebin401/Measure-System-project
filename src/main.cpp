@@ -8,7 +8,6 @@
 #define BUTTON_B_PIN 3
 #define BUZZER_PIN 9
 #define POT_PIN A1
-//#define HALL_SIM_PIN A0 
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 AS5600 as5600;
@@ -127,7 +126,7 @@ void setup()
   Wire.begin();
   lcd.init();
   lcd.backlight();
-  //
+
   Serial.begin(115200);
   Serial.println("===== Serial initialization =====");
 
