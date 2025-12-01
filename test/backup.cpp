@@ -10,6 +10,46 @@
 #define POT_PIN A1
 //#define HALL_SIM_PIN A0 
 
+
+// 포토인터럽터 관련 내용
+
+#include <math.h>
+
+// ==================== 사용자 설정 ==========================
+const int   PHOTO_PIN      = 4;          // BUP-50S 검정선 → D2
+
+// ★ 수정: 플래그 폭 [m] (M5 나사 지름 ≈ 5mm)
+const float FLAG_WIDTH_M   = 0.005f;
+
+// 관성모멘트: I = (T^2 * M * g * D) / (4 π^2)
+const float M_total_kg     = 1.50f;
+const float D_m            = 0.40f;
+const float G_ACCEL        = 9.80665f;
+const float PI_F           = 3.14159265f;
+// ==========================================================
+
+// 상태 저장용
+int           lastState        = HIGH;
+bool          blockActive      = false;
+unsigned long blockStartUs     = 0;
+
+unsigned long prevHitUs        = 0;
+unsigned long lastHitUs        = 0;
+unsigned long hitCount         = 0;
+
+// 로그 감쇠 계산용
+float lastV     = 0.0f;
+float prevV     = 0.0f;
+float lastDelta = 0.0f;
+float lastZeta  = 0.0f;
+bool  havePrevV = false;
+
+// 마지막 유효 주기 / 관성모멘트 기억
+float lastT_valid = -1.0f;
+float lastI_valid = -1.0f;
+
+// 인터럽터 끝 ===============
+
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 AS5600 as5600;
 
@@ -128,7 +168,7 @@ void setup()
   lcd.init();
   lcd.backlight();
   //
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("===== Serial initialization =====");
 
   // as5600 연결 확인
@@ -153,7 +193,6 @@ void loop()
 
   static int mode1_selection = 0;
 
-  
   static int mode2_step = 0; 
   static float angleOffset = 0.0; 
   static unsigned long stableStartTime = 0; 
@@ -162,7 +201,6 @@ void loop()
   static unsigned long countdownStartTime = 0; 
   static int countdown = 3; 
   
-
   switch (mode) 
   {
     case 0: // setting angle mode
@@ -183,8 +221,8 @@ void loop()
         Serial.print("Button A clicked, currne mode: ");
         Serial.println(mode);
         SetAngle = angle;
-        Serial.print("setting angle:");
-        Serial.print(SetAngle);
+        Serial.print("setting angle: ");
+        Serial.println(SetAngle);
         updateLcdDisplay();
         mode2_step = 0; // 새로 추가: Mode 2의 상태를 초기화
 
@@ -240,38 +278,116 @@ void loop()
       break;
     
     case 2: // hall sensor calibration mode
+    {
+      // --- [수정] 캘리브레이션 워크플로우 구현 ---
+
+      // 1. AS5600에서 원시 각도 읽기 (항상)
+      int rawAngle = as5600.readAngle();
+      float currentAngle = (float)rawAngle * 360.0 / 4096.0;
+
+      // --- Step 0: (진입) 캘리브레이션 시작 대기 ---
+      if (mode2_step == 0)
       {
-        // 1. AS5600에서 원시 각도 읽기 (0-4095)
-        int rawAngle = as5600.readAngle();
-        // 2. 0-360.0도 범위로 변환
-        float currentAngle = (float)rawAngle * 360.0 / 4096.0;
-
-        // 3. LCD 두 번째 줄에 각도 출력
         lcd.setCursor(0, 1);
-        lcd.print("Angle: ");
-        lcd.print(currentAngle, 2); // 소수점 2자리까지
-        lcd.print(" deg  "); // 잔상 제거
+        lcd.print("Raw: ");
+        lcd.print(currentAngle, 2);
+        lcd.print(" deg  ");
 
-        // '앞으로 가기' 버튼
+        // (1. 워크플로우) A 버튼 클릭 시 캘리브레이션 대기 시작
         if (A_pressed) 
         {
-          mode++;
-          Serial.print("Button A clicked, currne mode: ");
-          Serial.println(mode);
-          updateLcdDisplay();
+          mode2_step = 1; // 캘리브레이션 대기 단계로 이동
+          stableStartTime = millis(); // 타이머 리셋
+          lastStableValue = currentAngle; // 현재 값으로 안정화 기준 설정
+          lcd.setCursor(0, 1);
+          lcd.print("Waiting static...");
+          Serial.println("Calibration step 1: Waiting for static...");
         }
 
-        // '뒤로 가기' 버튼
+        // '뒤로 가기' 버튼 (이 단계에선 B만 활성화)
         if (B_pressed) 
         {
           mode--; // mode 1 (선택 화면)으로 이동
           Serial.print("Button B clicked, current mode: ");
           Serial.println(mode);
           updateLcdDisplay();
+          // mode2_step = 0; // (어차피 0임)
+        }
+      }
+      
+      // --- Step 1: (대기) 2초간 정수 각도 정지 감지 ---
+      else if (mode2_step == 1)
+      {
+        // (2. 워크플로우) 이 단계에서는 A/B 버튼 입력을 의도적으로 무시
+        
+        // '정수' 각도만 비교
+        int currentIntAngle = (int)currentAngle;
+        int lastIntAngle = (int)lastStableValue;
+
+        // 정수 각도가 변경되면 타이머 리셋
+        if (currentIntAngle != lastIntAngle) 
+        {
+          stableStartTime = millis(); // 타이머 리셋
+          lastStableValue = currentAngle; // 기준 값 갱신
+          // lcd.print("Waiting static..."); // 메시지 유지
         }
 
-        break;
+        // 2초간 정지했는지 확인
+        if (millis() - stableStartTime > 2000) 
+        {
+          angleOffset = currentAngle; // [영점 설정] 현재 각도를 0점(offset)으로 저장
+          mode2_step = 2; // (3) 캘리브레이션 완료 단계로 이동
+          Serial.print("Zero point set at: "); Serial.println(angleOffset);
+          lcd.setCursor(0, 1);
+          lcd.print("Calibrated!     ");
+          delay(1000); // 사용자가 메시지를 볼 수 있도록 잠시 대기
+        }
       }
+
+      // --- Step 2: (완료) 보정된 각도(+/-) 출력 ---
+      else if (mode2_step == 2)
+      {
+        // 1. 보정된 각도 계산 (currentAngle - angleOffset)
+        float calibratedAngle = currentAngle - angleOffset;
+
+        // 2. Wrap-around 처리 (각도를 -180 ~ +180 범위로)
+        if (calibratedAngle > 180.0) {
+          calibratedAngle -= 360.0; // 예: (350 - 0) = 350  -> -10
+        } else if (calibratedAngle < -180.0) {
+          calibratedAngle += 360.0; // 예: (10 - 350) = -340 -> +20
+        }
+        
+        // (센서의 시계방향(+) 설정은 하드웨어 방향에 따라 결정됩니다)
+        
+        // 3. LCD에 튜닝된 각도 출력
+        lcd.setCursor(0, 1);
+        lcd.print("Angle: ");
+        if (calibratedAngle > 0) lcd.print("+"); // + 부호 표시
+        lcd.print(calibratedAngle, 2);
+        lcd.print(" deg  ");
+
+        // (3. 워크플로우) 캘리브레이션 완료 후 버튼 활성화
+        if (A_pressed) 
+        {
+          mode++;
+          Serial.print("Button A clicked, currne mode: ");
+          Serial.println(mode);
+          updateLcdDisplay();
+          // mode2_step = 0; // (어차피 case 0에서 리셋됨)
+        }
+
+        if (B_pressed) 
+        {
+          mode--; // mode 1 (선택 화면)으로 이동
+          Serial.print("Button B clicked, current mode: ");
+          Serial.println(mode);
+          updateLcdDisplay();
+          // mode2_step = 0; // (어차피 case 1에서 리셋됨)
+        }
+      }
+      
+      break; // case 2의 break
+    }
       
     case 3:
       lcd.setCursor(0, 1);
@@ -290,6 +406,107 @@ void loop()
         Serial.print("Button B clicked, current mode: ");
         Serial.println(mode);
         updateLcdDisplay();
+      }
+
+
+      int state = digitalRead(PHOTO_PIN);
+      unsigned long nowUs = micros();
+
+      if (state != lastState) {
+        // HIGH → LOW : 막힘 시작
+        if (lastState == HIGH && state == LOW) {
+          blockActive  = true;
+          blockStartUs = nowUs;
+        }
+        // LOW → HIGH : 막힘 끝 = 플래그 통과 완료
+        else if (lastState == LOW && state == HIGH) {
+          if (blockActive) {
+            unsigned long tauUs = nowUs - blockStartUs;
+            blockActive = false;
+
+            // ----- 히트 시간 업데이트 -----
+            prevHitUs = lastHitUs;
+            lastHitUs = nowUs;
+            hitCount++;
+
+            // ===== 1) 주기 T 계산 =====
+            // ★ 수정 포인트:
+            //  - 센서가 진자 최저점 근처에 있다면,
+            //    연속 두 히트 사이 시간 = 반주기 T/2
+            //  - 따라서 실제 주기 T = 2 * (lastHitUs - prevHitUs)
+            float T_inst = -1.0f;
+            if (prevHitUs != 0) {
+              unsigned long halfUs = lastHitUs - prevHitUs; // 반주기 [us]
+              float halfT = halfUs / 1e6f;                  // 반주기 [s]
+              T_inst = 2.0f * halfT;                        // 전체 주기 T [s]
+              lastT_valid = T_inst;                         // 유효 T 갱신
+            }
+            // 이번에 못 구해도 이전 값이 있으면 그걸 사용
+            float T_use = (lastT_valid > 0.0f) ? lastT_valid : -1.0f;
+
+            // ===== 2) tau / v =====
+            float tau_ms = tauUs / 1000.0f;   // [ms]
+            float tau_s  = tauUs / 1e6f;      // [s]
+            float v      = FLAG_WIDTH_M / tau_s;
+
+            // ===== 3) 로그 감쇠량 / 감쇠비 =====
+            // δ = ln(v_prev / v_now),  ζ = δ / sqrt(4π^2 + δ^2)
+            bool  delta_valid = false;
+            float delta = 0.0f;
+            float zeta  = 0.0f;
+
+            prevV = lastV;
+            lastV = v;
+            if (havePrevV && prevV > 0.0f && lastV > 0.0f) {
+              delta = log(prevV / lastV);
+              zeta  = delta / sqrt(4.0f * PI_F * PI_F + delta * delta);
+              lastDelta = delta;
+              lastZeta  = zeta;
+              delta_valid = true;
+            } else {
+              havePrevV = true;
+            }
+
+            // ===== 4) 관성모멘트 =====
+            // I = (T^2 * M * g * D) / (4 π^2)
+            float I_total = -1.0f;
+            if (T_use > 0.0f && M_total_kg > 0.0f && D_m > 0.0f) {
+              I_total = (T_use * T_use) * M_total_kg * G_ACCEL * D_m
+                        / (4.0f * PI_F * PI_F);
+              lastI_valid = I_total;
+            }
+            float I_print = (lastI_valid > 0.0f) ? lastI_valid : -1.0f;
+
+            // ===== 5) 한 줄 출력 =====
+            Serial.print('#');
+            Serial.print(hitCount);
+            Serial.print('\t');
+
+            if (T_use > 0) Serial.print(T_use, 6);
+            else           Serial.print(F("NA"));
+            Serial.print('\t');
+
+            Serial.print(tau_ms, 3);
+            Serial.print('\t');
+
+            Serial.print(v, 4);
+            Serial.print('\t');
+
+            if (delta_valid) Serial.print(delta, 6);
+            else             Serial.print(F("NA"));
+            Serial.print('\t');
+
+            if (delta_valid) Serial.print(zeta, 6);
+            else             Serial.print(F("NA"));
+            Serial.print('\t');
+
+            if (I_print > 0) Serial.print(I_print, 8);
+            else             Serial.print(F("NA"));
+            Serial.println();
+          }
+        }
+
+        lastState = state;
       }
       break;
 
