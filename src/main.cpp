@@ -119,6 +119,52 @@ void updateLcdDisplay()
   
 }
 
+void mode4_updateLcd(const char* title, int digits[6], int pos, bool isDone) {
+  // 1행 제목 표시
+  lcd.clear(); // [참고] 버튼 클릭 시 깜박임. 나중에 clear() 대신 setCursor()와 공백으로 최적화 가능
+  lcd.setCursor(0, 0); 
+  lcd.print(title);
+
+  // 2행 "XXXX.XX" 형식으로 숫자 문자열 생성
+  char displayString[10];
+  sprintf(displayString, "%d%d%d%d.%d%d", 
+          digits[5], digits[4], digits[3], digits[2], digits[1], digits[0]);
+  lcd.setCursor(0, 1);
+  lcd.print(displayString);
+  lcd.print("        "); // 잔상 제거
+
+  // 3. 커서(^) 위치 계산 (입력 중에만)
+  if (!isDone) {
+    int cursorMap[6] = {6, 5, 3, 2, 1, 0}; // XXXX.XX 문자열에서의 인덱스
+    char cursorString[17] = "                "; 
+    int lcd_pos = cursorMap[pos];
+    cursorString[lcd_pos] = '^';
+    lcd.setCursor(0, 1);
+    lcd.print(cursorString); // 덮어쓰기
+  }
+}
+
+float mode4_getFinalValue(int digits[6]) {
+  float value = 0.0;
+  value += (float)digits[0] * 0.01;
+  value += (float)digits[1] * 0.1;
+  value += (float)digits[2] * 1.0;
+  value += (float)digits[3] * 10.0;
+  value += (float)digits[4] * 100.0;
+  value += (float)digits[5] * 1000.0;
+  return value;
+}
+
+
+void mode4_resetInput(int digits[6], int& pos, int& lastDigit, bool& isDone) {
+  for (int i = 0; i < 6; i++) {
+    digits[i] = 0;
+  }
+  pos = 0; // 0.01 자리부터
+  lastDigit = -1;
+  isDone = false;
+}
+
 void setup() 
 {
   buttonA = new DebouncedButton(BUTTON_A_PIN);
@@ -163,6 +209,12 @@ void loop()
   static float angleOffset = 0.0; 
   static unsigned long stableStartTime = 0; 
   static float lastStableValue = -1.0;
+
+  static int mode4_editingStep = 0; // 0=Mass 입력 중, 1=Distance 입력 중
+  static int digits[6] = {0, 0, 0, 0, 0, 0}; // [0.01 ... 1000]
+  static int currentDigitPosition = 0; // 현재 수정 중인 자릿수
+  static int lastMappedDigit = -1;     // 가변저항 값 변경 감지용
+  static bool isInputDone = false;      // 6자리 입력 완료 플래그
   
   switch (mode) 
   {
@@ -373,39 +425,80 @@ void loop()
     
     case 4:
     {
-      
-      // 1. LCD에 현재 설정된 값(예시 값) 출력
-      lcd.setCursor(0, 0); // 1행
-      lcd.print("M: ");
-      lcd.print(mass_kg, 2); // 예: 1.50
-      lcd.print(" kg");
-      lcd.print("        "); // 잔상 제거
-
-      lcd.setCursor(0, 1); // 2행
-      lcd.print("D: ");
-      lcd.print(distance_m, 2); // 예: 0.25
-      lcd.print(" m");
-      lcd.print("         "); // 잔상 제거
-      
-      // 2. 버튼 로직
-      if (A_pressed) 
-      {
-        mode = 0; // 완료. 처음(mode 0)으로 순환
-        Serial.print("Button A clicked, currne mode: ");
-        Serial.println(mode);
-        updateLcdDisplay();
+      // 0. 현재 편집 중인 변수의 제목 결정
+      const char* title;
+      if (mode4_editingStep == 0) {
+        title = "Set Mass (kg)";
+      } else {
+        title = "Set Dist. (m)";
       }
 
-      if (B_pressed) 
-      {
-        mode--; // '뒤로 가기' (mode 3)
-        Serial.print("Button B clicked, current mode: ");
-        Serial.println(mode);
-        updateLcdDisplay();
+      // 1. 입력 완료 상태 (isInputDone == true)
+      if (isInputDone) {
+        // (Mass 또는 Dist 입력이 방금 완료됨)
+        if (mode4_editingStep == 0) { // Mass 입력이 끝났다면
+          mass_kg = mode4_getFinalValue(digits); // 1. 값 저장
+          Serial.print("Mass set to: "); Serial.println(mass_kg);
+          
+          mode4_editingStep = 1; // 2. Distance 입력으로 이동
+          // 3. 입력기 리셋 (digits, pos, lastDigit, isDone 변수 리셋)
+          mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone); 
+          // 4. 새 화면 표시 (헬퍼 함수 호출)
+          mode4_updateLcd("Set Dist. (m)", digits, currentDigitPosition, isInputDone); 
+        } 
+        else { // Distance 입력이 끝났다면
+          distance_m = mode4_getFinalValue(digits); // 1. 값 저장
+          Serial.print("Distance set to: "); Serial.println(distance_m);
+          
+          mode4_editingStep = 0; // 2. (다음 진입을 위해) Mass 입력으로 리셋
+          isInputDone = false;     // 3. (다음 진입을 위해) 플래그 리셋
+          mode = 0; // 4. 완료! mode 0으로 이동
+          updateLcdDisplay(); // 5. mode 0 화면 표시
+        }
+      }
+      
+      // 2. 입력 진행 상태 (isInputDone == false)
+      else {
+        // 2a. 가변저항 값 읽기 (POT_PIN은 A1으로 정의되어 있음)
+        int potVal = analogRead(POT_PIN);
+        int newDigit = map(potVal, 0, 1023, 0, 10);
+        newDigit = constrain(newDigit, 0, 9);
+
+        // 2b. '변화가 있을 때만' 값 업데이트
+        if (newDigit != lastMappedDigit) {
+            digits[currentDigitPosition] = newDigit;
+            lastMappedDigit = newDigit;
+            mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); // LCD 새로고침
+        }
+
+        // 2c. 버튼 A (다음 자릿수)
+        if (A_pressed) {
+            currentDigitPosition++;
+            lastMappedDigit = -1; // 다음 자릿수에서 팟 값 강제 리프레시
+
+            if (currentDigitPosition >= 6) { // 6자리 입력 완료
+                isInputDone = true; 
+                // (loop가 다음 턴에 if(isInputDone) 블록을 실행할 것임)
+            } else {
+                mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); // 커서 이동
+            }
+        }
+
+        // 2d. 버튼 B (취소/뒤로가기)
+        if (B_pressed) {
+            mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone);
+            
+            if (mode4_editingStep == 0) { // Mass 입력 중 B를 누르면
+                mode = 3; // mode 3으로 '뒤로가기'
+                updateLcdDisplay();
+            } else { // Distance 입력 중 B를 누르면
+                mode4_editingStep = 0; // Mass 입력으로 '뒤로가기'
+                mode4_updateLcd("Set Mass (kg)", digits, currentDigitPosition, isInputDone);
+            }
+        }
       }
       break;
-    }
-
+    } 
   }
   
   delay(10); 
