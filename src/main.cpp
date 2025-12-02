@@ -132,16 +132,7 @@ void mode4_updateLcd(const char* title, int digits[6], int pos, bool isDone) {
   lcd.setCursor(0, 1);
   lcd.print(displayString);
   lcd.print("        "); // 잔상 제거
-
-  // 3. 커서(^) 위치 계산 (입력 중에만)
-  if (!isDone) {
-    int cursorMap[6] = {6, 5, 3, 2, 1, 0}; // XXXX.XX 문자열에서의 인덱스
-    char cursorString[17] = "                "; 
-    int lcd_pos = cursorMap[pos];
-    cursorString[lcd_pos] = '^';
-    lcd.setCursor(0, 1);
-    lcd.print(cursorString); // 덮어쓰기
-  }
+  
 }
 
 float mode4_getFinalValue(int digits[6]) {
@@ -154,7 +145,6 @@ float mode4_getFinalValue(int digits[6]) {
   value += (float)digits[5] * 1000.0;
   return value;
 }
-
 
 void mode4_resetInput(int digits[6], int& pos, int& lastDigit, bool& isDone) {
   for (int i = 0; i < 6; i++) {
@@ -219,7 +209,6 @@ void loop()
   switch (mode) 
   {
     case 0: // setting angle mode
-    // angle 자료형 추후 변경 논의 필요 (float -> int) 
     {
       float potVal = analogRead(POT_PIN);
       float angle = map(potVal, 0, 1020, 0, 300) / 10.0;
@@ -239,13 +228,14 @@ void loop()
         Serial.print("setting angle: ");
         Serial.println(SetAngle);
         updateLcdDisplay();
-        mode2_step = 0; // 새로 추가: Mode 2의 상태를 초기화
+        mode2_step = 0; 
 
       }
       break;
     }
 
     case 1:
+    {
       lcd.setCursor(0, 1); // 2번째 줄로 이동
       
       if (mode1_selection == 0) // 'Hall'이 선택된 경우
@@ -290,6 +280,7 @@ void loop()
         }
       }
       break;
+    }
     
     case 2: // hall sensor calibration mode
     {
@@ -425,7 +416,6 @@ void loop()
     
     case 4:
     {
-      // 0. 현재 편집 중인 변수의 제목 결정
       const char* title;
       if (mode4_editingStep == 0) {
         title = "Set Mass (kg)";
@@ -459,7 +449,7 @@ void loop()
       
       // 2. 입력 진행 상태 (isInputDone == false)
       else {
-        // 2a. 가변저항 값 읽기 (POT_PIN은 A1으로 정의되어 있음)
+        
         int potVal = analogRead(POT_PIN);
         int newDigit = map(potVal, 0, 1023, 0, 10);
         newDigit = constrain(newDigit, 0, 9);
