@@ -102,9 +102,10 @@ void updateLcdDisplay()
     case 0: lcd.print("== Set angle ==");   break;
     case 1: lcd.print("== which mode? =="); break;
     case 2: lcd.print("== Hall mode ==");   break;
-    case 3: lcd.print("== mode 3 ==");      break;
+    case 3: lcd.print("== Measure ==");     break;
+    case 5: lcd.print("== mode 5 ==");      break;
     case 4: lcd.print("== Set M & D ==");   break;
-    case 5: lcd.print("== Measure ==");     break;
+    
   }
   
 }
@@ -390,106 +391,9 @@ void loop()
       
       break; // case 2의 break
     }
-      
-    case 3:
-    {
-      lcd.setCursor(0, 1);
-      lcd.print("from case - 3");
-      if (A_pressed) 
-      {
-        mode++;
-        Serial.print("Button A clicked, currne mode: ");
-        Serial.println(mode);
-        updateLcdDisplay();
-      }
+    
 
-      if (B_pressed) 
-      {
-        mode--;
-        Serial.print("Button B clicked, current mode: ");
-        Serial.println(mode);
-        updateLcdDisplay();
-      }
-      break;
-    }
-
-    case 4:
-    {
-      const char* title;
-      if (mode4_editingStep == 0) {
-        title = "Set Mass (kg)";
-      } else {
-        title = "Set Dist. (m)";
-      }
-
-      // 1. 입력 완료 상태 (isInputDone == true)
-      if (isInputDone) {
-        // (Mass 또는 Dist 입력이 방금 완료됨)
-        if (mode4_editingStep == 0) { // Mass 입력이 끝났다면
-          mass_kg = mode4_getFinalValue(digits); // 1. 값 저장
-          Serial.print("Mass set to: "); Serial.println(mass_kg);
-          
-          mode4_editingStep = 1; // 2. Distance 입력으로 이동
-          // 3. 입력기 리셋 (digits, pos, lastDigit, isDone 변수 리셋)
-          mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone); 
-          // 4. 새 화면 표시 (헬퍼 함수 호출)
-          mode4_updateLcd("Set Dist. (m)", digits, currentDigitPosition, isInputDone); 
-        } 
-        else { // Distance 입력이 끝났다면
-          distance_m = mode4_getFinalValue(digits); // 1. 값 저장
-          Serial.print("Distance set to: "); Serial.println(distance_m);
-          
-          mode4_editingStep = 0; // 2. (다음 진입을 위해) Mass 입력으로 리셋
-          isInputDone = false;     // 3. (다음 진입을 위해) 플래그 리셋
-          mode ++; // 4. 완료! mode 0으로 이동
-          updateLcdDisplay(); // 5. mode 0 화면 표시
-        }
-      }
-      
-      // 2. 입력 진행 상태 (isInputDone == false)
-      else {
-        
-        int potVal = analogRead(POT_PIN);
-        int newDigit = map(potVal, 0, 1023, 0, 10);
-        newDigit = constrain(newDigit, 0, 9);
-
-        // 2b. '변화가 있을 때만' 값 업데이트
-        if (newDigit != lastMappedDigit) {
-            digits[currentDigitPosition] = newDigit;
-            lastMappedDigit = newDigit;
-            mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); // LCD 새로고침
-        }
-
-        // 2c. 버튼 A (다음 자릿수)
-        if (A_pressed) {
-            currentDigitPosition++;
-            lastMappedDigit = -1; // 다음 자릿수에서 팟 값 강제 리프레시
-
-            if (currentDigitPosition >= 6) { // 6자리 입력 완료
-                isInputDone = true; 
-                // (loop가 다음 턴에 if(isInputDone) 블록을 실행할 것임)
-            } else {
-                mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); // 커서 이동
-            }
-        }
-
-        // 2d. 버튼 B (취소/뒤로가기)
-        if (B_pressed) {
-            mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone);
-            
-            if (mode4_editingStep == 0) { // Mass 입력 중 B를 누르면
-                mode = 3; // mode 3으로 '뒤로가기'
-                updateLcdDisplay();
-            } else { // Distance 입력 중 B를 누르면
-                mode4_editingStep = 0; // Mass 입력으로 '뒤로가기'
-                mode4_updateLcd("Set Mass (kg)", digits, currentDigitPosition, isInputDone);
-            }
-        }
-      }
-      break;
-    } 
-    // --- [새로 추가] Mode 5: 홀센서 스윙 측정 및 타이머 ---
-    case 5:
+    case 3: // 홀센서 캘리브레이션 종료 후 스윙 측정 모드
     {
       // 1. 현재 각도 계산 (캘리브레이션 값 적용)
       int rawAngle = as5600.readAngle();
@@ -585,11 +489,119 @@ void loop()
          // (여기서 추후에 스윙 감지 알고리즘을 실행할 수 있습니다)
       }
 
+      // A버튼: 다음 모드로 진입
+      if (A_pressed) 
+      {
+        mode++;
+        Serial.print("Button A clicked, currne mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+
       // B버튼: 언제든 설정 모드로 복귀
       if (B_pressed) {
-         mode = 4;
+         mode = 2;
          mode4_editingStep = 0; // 설정 첫 단계로 리셋
          updateLcdDisplay();
+      }
+      break;
+    }
+
+    case 4:
+    {
+      const char* title;
+      if (mode4_editingStep == 0) {
+        title = "Set Mass (kg)";
+      } else {
+        title = "Set Dist. (m)";
+      }
+
+      // 1. 입력 완료 상태 (isInputDone == true)
+      if (isInputDone) {
+        // (Mass 또는 Dist 입력이 방금 완료됨)
+        if (mode4_editingStep == 0) { // Mass 입력이 끝났다면
+          mass_kg = mode4_getFinalValue(digits); // 1. 값 저장
+          Serial.print("Mass set to: "); Serial.println(mass_kg);
+          
+          mode4_editingStep = 1; // 2. Distance 입력으로 이동
+          // 3. 입력기 리셋 (digits, pos, lastDigit, isDone 변수 리셋)
+          mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone); 
+          // 4. 새 화면 표시 (헬퍼 함수 호출)
+          mode4_updateLcd("Set Dist. (m)", digits, currentDigitPosition, isInputDone); 
+        } 
+        else { // Distance 입력이 끝났다면
+          distance_m = mode4_getFinalValue(digits); // 1. 값 저장
+          Serial.print("Distance set to: "); Serial.println(distance_m);
+          
+          mode4_editingStep = 0; // 2. (다음 진입을 위해) Mass 입력으로 리셋
+          isInputDone = false;     // 3. (다음 진입을 위해) 플래그 리셋
+          mode ++; // 4. 완료! mode 0으로 이동
+          updateLcdDisplay(); // 5. mode 0 화면 표시
+        }
+      }
+      
+      // 2. 입력 진행 상태 (isInputDone == false)
+      else {
+        
+        int potVal = analogRead(POT_PIN);
+        int newDigit = map(potVal, 0, 1023, 0, 10);
+        newDigit = constrain(newDigit, 0, 9);
+
+        // 2b. '변화가 있을 때만' 값 업데이트
+        if (newDigit != lastMappedDigit) {
+            digits[currentDigitPosition] = newDigit;
+            lastMappedDigit = newDigit;
+            mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); // LCD 새로고침
+        }
+
+        // 2c. 버튼 A (다음 자릿수)
+        if (A_pressed) {
+            currentDigitPosition++;
+            lastMappedDigit = -1; // 다음 자릿수에서 팟 값 강제 리프레시
+
+            if (currentDigitPosition >= 6) { // 6자리 입력 완료
+                isInputDone = true; 
+                // (loop가 다음 턴에 if(isInputDone) 블록을 실행할 것임)
+            } else {
+                mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); // 커서 이동
+            }
+        }
+
+        // 2d. 버튼 B (취소/뒤로가기)
+        if (B_pressed) {
+            mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone);
+            
+            if (mode4_editingStep == 0) { // Mass 입력 중 B를 누르면
+                mode = 3; // mode 3으로 '뒤로가기'
+                updateLcdDisplay();
+            } else { // Distance 입력 중 B를 누르면
+                mode4_editingStep = 0; // Mass 입력으로 '뒤로가기'
+                mode4_updateLcd("Set Mass (kg)", digits, currentDigitPosition, isInputDone);
+            }
+        }
+      }
+      break;
+    } 
+  
+    
+    case 5:
+    {
+      lcd.setCursor(0, 1);
+      lcd.print("mode 5");
+      if (A_pressed) 
+      {
+        mode = 0;
+        Serial.print("Button A clicked, currne mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
+      }
+
+      if (B_pressed) 
+      {
+        mode--;
+        Serial.print("Button B clicked, current mode: ");
+        Serial.println(mode);
+        updateLcdDisplay();
       }
       break;
     }
