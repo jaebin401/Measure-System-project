@@ -99,21 +99,11 @@ void updateLcdDisplay()
 
   switch (mode) 
   {
-    case 0:
-      lcd.print("== Set angle ==");   
-      break;
-    case 1:
-      lcd.print("== which mode? ==");
-      break;
-    case 2:
-      lcd.print("== Hall mode ==");
-      break;
-    case 3:
-      lcd.print("== mode 3 ==");
-      break;
-    case 4:
-      lcd.print("== Set M & D ==");
-      break;
+    case 0: lcd.print("== Set angle ==");   break;
+    case 1: lcd.print("== which mode? =="); break;
+    case 2: lcd.print("== Hall mode ==");   break;
+    case 3: lcd.print("== mode 3 ==");      break;
+    case 4: lcd.print("== Set M & D ==");   break;
 
   }
   
@@ -170,7 +160,7 @@ void setup()
   lcd.init();
   lcd.backlight();
 
-  Serial.begin(115200);
+  Serial.begin(9600);
   Serial.println("===== Serial initialization =====");
 
   // as5600 연결 확인
@@ -199,7 +189,7 @@ void loop()
   static float angleOffset = 0.0; 
   static unsigned long stableStartTime = 0; 
   static float lastStableValue = -1.0;
-
+  
   static int mode4_editingStep = 0; // 0=Mass 입력 중, 1=Distance 입력 중
   static int digits[6] = {0, 0, 0, 0, 0, 0}; // [0.01 ... 1000]
   static int currentDigitPosition = 0; // 현재 수정 중인 자릿수
