@@ -104,12 +104,13 @@ void updateLcdDisplay()
     case 2: lcd.print("== Hall mode ==");   break;
     case 3: lcd.print("== mode 3 ==");      break;
     case 4: lcd.print("== Set M & D ==");   break;
-
+    case 5: lcd.print("== Measure ==");     break;
   }
   
 }
 
-void mode4_updateLcd(const char* title, int digits[6], int pos, bool isDone) {
+void mode4_updateLcd(const char* title, int digits[6], int pos, bool isDone) 
+{
   // 1행 제목 표시
   lcd.clear(); // [참고] 버튼 클릭 시 깜박임. 나중에 clear() 대신 setCursor()와 공백으로 최적화 가능
   lcd.setCursor(0, 0); 
@@ -163,7 +164,7 @@ void setup()
   Serial.begin(9600);
   Serial.println("===== Serial initialization =====");
 
-  // as5600 연결 확인
+  // 시리얼 모니터에서 as5600 연결 확인 (디버깅)
   Serial.println("Checking for AS5600...");
   if (as5600.readAngle() == -1) { // Seeed 라이브러리는 I2C 오류 시 -1 반환
       Serial.println("AS5600 not detected! Check wiring.");
@@ -195,6 +196,12 @@ void loop()
   static int currentDigitPosition = 0; // 현재 수정 중인 자릿수
   static int lastMappedDigit = -1;     // 가변저항 값 변경 감지용
   static bool isInputDone = false;      // 6자리 입력 완료 플래그
+
+  static int mode5_step = 0; // 0=각도대기, 1=카운트다운, 2=타이머작동
+  static unsigned long mode5_stableStartTime = 0; // 안정화 타이머
+  static unsigned long mode5_timerStart = 0;      // 스톱워치 시작 시간
+  static unsigned long mode5_prevTime = 0;        // 카운트다운 1초 체크용
+  static int mode5_countdown = 3;                 // 3초 카운트다운
   
   switch (mode) 
   {
@@ -385,6 +392,7 @@ void loop()
     }
       
     case 3:
+    {
       lcd.setCursor(0, 1);
       lcd.print("from case - 3");
       if (A_pressed) 
@@ -403,7 +411,8 @@ void loop()
         updateLcdDisplay();
       }
       break;
-    
+    }
+
     case 4:
     {
       const char* title;
@@ -432,7 +441,7 @@ void loop()
           
           mode4_editingStep = 0; // 2. (다음 진입을 위해) Mass 입력으로 리셋
           isInputDone = false;     // 3. (다음 진입을 위해) 플래그 리셋
-          mode = 0; // 4. 완료! mode 0으로 이동
+          mode ++; // 4. 완료! mode 0으로 이동
           updateLcdDisplay(); // 5. mode 0 화면 표시
         }
       }
@@ -479,6 +488,111 @@ void loop()
       }
       break;
     } 
+    // --- [새로 추가] Mode 5: 홀센서 스윙 측정 및 타이머 ---
+    case 5:
+    {
+      // 1. 현재 각도 계산 (캘리브레이션 값 적용)
+      int rawAngle = as5600.readAngle();
+      float currentAngle = (float)rawAngle * 360.0 / 4096.0;
+      float calibratedAngle = currentAngle - angleOffset;
+      
+      // 각도 보정 (-180 ~ +180)
+      if (calibratedAngle > 180.0) calibratedAngle -= 360.0;
+      else if (calibratedAngle < -180.0) calibratedAngle += 360.0;
+
+      // --- Step 0: 목표 각도 맞춤 및 안정화 감지 ---
+      if (mode5_step == 0)
+      {
+         // 목표 각도(SetAngle)와 현재 각도의 차이 (절대값)
+         // *참고: 진자를 어느 방향으로 들어도 되도록 둘 다 절대값 비교
+         float diff = fabs(SetAngle - fabs(calibratedAngle));
+
+         lcd.setCursor(0, 1);
+         lcd.print("Go to: ");
+         lcd.print(SetAngle, 1);
+         lcd.print(" (");
+         lcd.print(fabs(calibratedAngle), 1); // 현재 각도
+         lcd.print(")  "); // 잔상 제거
+
+         // 오차 범위 3도 이내면 "준비" 상태로 간주
+         if (diff < 3.0) 
+         {
+            // 안정화 타이머가 꺼져있다면(0) 시작
+            if (mode5_stableStartTime == 0) mode5_stableStartTime = millis();
+            
+            unsigned long stableDuration = millis() - mode5_stableStartTime;
+
+            // 1.5초 이상 유지하면 카운트다운 시작
+            if (stableDuration > 1500) 
+            {
+               mode5_step = 1; // 카운트다운 단계로
+               mode5_countdown = 3;
+               mode5_prevTime = millis();
+               tone(BUZZER_PIN, 1500, 100); // "삑" (준비 완료 알림)
+               lcd.clear();
+            }
+            // 안정화 중에는 짧은 비프음으로 피드백 (선택사항)
+            // else if (stableDuration > 500 && stableDuration % 300 < 50) {
+            //    tone(BUZZER_PIN, 2000, 20); 
+            // }
+         }
+         else 
+         {
+            mode5_stableStartTime = 0; // 범위를 벗어나면 타이머 리셋
+         }
+      }
+
+      // --- Step 1: 카운트다운 (3, 2, 1) ---
+      else if (mode5_step == 1)
+      {
+         lcd.setCursor(0, 0);
+         lcd.print("== Ready? ==");
+         lcd.setCursor(0, 1);
+         lcd.print("Start in ");
+         lcd.print(mode5_countdown);
+         lcd.print("...    ");
+
+         // 1초마다 카운트 감소
+         if (millis() - mode5_prevTime >= 1000) 
+         {
+            mode5_countdown--;
+            mode5_prevTime = millis();
+            
+            if (mode5_countdown > 0) {
+               tone(BUZZER_PIN, 800, 100); // "삑"
+            } else {
+               tone(BUZZER_PIN, 2500, 600); // "삐---익!" (시작)
+               mode5_step = 2; // 타이머 단계로
+               mode5_timerStart = millis(); // 스톱워치 시작
+               lcd.clear();
+               lcd.setCursor(0, 0);
+               lcd.print("== Swinging ==");
+            }
+         }
+      }
+
+      // --- Step 2: 스톱워치 표시 (측정 중) ---
+      else if (mode5_step == 2)
+      {
+         unsigned long currentMillis = millis();
+         float elapsedSec = (currentMillis - mode5_timerStart) / 1000.0;
+
+         lcd.setCursor(0, 1);
+         lcd.print("Time: ");
+         lcd.print(elapsedSec, 2);
+         lcd.print(" s    ");
+         
+         // (여기서 추후에 스윙 감지 알고리즘을 실행할 수 있습니다)
+      }
+
+      // B버튼: 언제든 설정 모드로 복귀
+      if (B_pressed) {
+         mode = 4;
+         mode4_editingStep = 0; // 설정 첫 단계로 리셋
+         updateLcdDisplay();
+      }
+      break;
+    }
   }
   
   delay(10); 
