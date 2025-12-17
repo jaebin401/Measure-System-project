@@ -123,7 +123,7 @@ void mode4_updateLcd(const char* title, int digits[6], int pos, bool isDone)
   lcd.setCursor(0, 1);
   lcd.print(displayString);
   lcd.print("        "); // 잔상 제거
-  
+
 }
 
 float mode4_getFinalValue(int digits[6]) {
@@ -463,11 +463,13 @@ void loop()
       static float filteredAbsAngle = 0.0;
       filteredAbsAngle = (filteredAbsAngle * 0.2) + (absAngle * 0.8);
       
-      // [수정] 정수형 변환 (소수점 버림)
+      // 정수형 변환 (소수점 버림)
       int currentIntAngle = (int)filteredAbsAngle;
 
+      // --- Step 0, 1, 2 로직 (화면 표시 및 알고리즘) ---
       if (mode5_step == 0)
       {
+         // 필터 초기화
          if (mode5_stableStartTime == 0) {
              filteredAbsAngle = absAngle; 
          }
@@ -522,7 +524,7 @@ void loop()
                mode5_step = 2; 
                mode5_timerStart = millis(); 
                mode5_swingCount = 0;
-               mode5_prevIntAngle = currentIntAngle; // 정수형 초기값
+               mode5_prevIntAngle = currentIntAngle; 
                mode5_readyForPeak = false; 
                mode5_lastPeakTime = millis(); 
                mode5_lastPeriod = 0.0;
@@ -538,14 +540,12 @@ void loop()
       {
          unsigned long currentMillis = millis();
          
-         // [수정] 정수형 기준 적용
-         // 0점 통과 인식: 5도 미만 (정수형 5)
+         // 0점 통과 인식: 5도 미만
          if (currentIntAngle < 6) {
             mode5_readyForPeak = true;
          }
 
-         // [수정] 정점(Peak) 감지 (정수형 비교)
-         // 조건: (0점 통과함) AND (각도 꺾임) AND (최소 각도 8도 초과)
+         // 정점(Peak) 감지
          if (mode5_readyForPeak && (mode5_prevIntAngle > currentIntAngle) && (mode5_prevIntAngle > 12))
          {
              mode5_swingCount++;
@@ -554,7 +554,7 @@ void loop()
              mode5_lastPeriod = interval / 1000.0; 
              mode5_lastPeakTime = currentMillis;   
              
-             mode5_readyForPeak = false; // 잠금
+             mode5_readyForPeak = false; 
              
              tone(BUZZER_PIN, 1000, 50); 
          }
@@ -573,23 +573,33 @@ void loop()
          lcd.print("Total: ");
          lcd.print(totalElapsed, 2);
          lcd.print(" s   ");
-
-         if (A_pressed) 
-          {
-            mode = 4;
-            mode4_editingStep = 0;
-            updateLcdDisplay();
-          }
-          break;
-
-         if (B_pressed) 
-         {
-           mode = 2;
-           mode4_editingStep = 0;
-           updateLcdDisplay();
-         }
-         break;
       }
+
+      // --- [수정] 버튼 로직을 if/else 밖으로 이동하여 언제든 동작하게 함 ---
+      
+      // A버튼: 변수 설정(Mode 4)으로 이동
+      if (A_pressed) 
+      {
+        mode = 4;
+        mode4_editingStep = 0; // 설정 첫 단계로 리셋
+        // mode5 관련 변수도 초기화해주면 좋음
+        mode5_step = 0;
+        mode5_stableStartTime = 0;
+        updateLcdDisplay();
+      }
+
+      // B버튼: 0점 조정(Mode 2)으로 이동
+      if (B_pressed) 
+      {
+        mode = 2;
+        mode2_step = 2; // 캘리브레이션 완료 상태로 진입 (바로 각도 확인 가능)
+        // mode5 관련 변수 초기화
+        mode5_step = 0;
+        mode5_stableStartTime = 0;
+        updateLcdDisplay();
+      }
+      
+      break;
     }
   }
   
