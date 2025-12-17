@@ -18,6 +18,7 @@ float SetAngle = 0.0;
 // 관성모멘트 계산 물리량
 float mass_kg = 0.0;     
 float distance_m = 0.0;  
+float time_s = 0.0;
 
 class DebouncedButton 
 {
@@ -206,9 +207,7 @@ void loop()
   
   static int mode5_swingCount = 0;         
   static int mode5_prevIntAngle = 0;   // [수정] 정수형 이전 각도
-  static bool mode5_readyForPeak = false;  
-  static unsigned long mode5_lastPeakTime = 0; 
-  static float mode5_lastPeriod = 0.0;     
+  static bool mode5_readyForPeak = false; 
   
   switch (mode) 
   {
@@ -463,16 +462,13 @@ void loop()
       static float filteredAbsAngle = 0.0;
       filteredAbsAngle = (filteredAbsAngle * 0.2) + (absAngle * 0.8);
       
-      // 정수형 변환 (소수점 버림)
+      // 정수형 변환
       int currentIntAngle = (int)filteredAbsAngle;
 
-      // --- Step 0, 1, 2 로직 (화면 표시 및 알고리즘) ---
+      // --- Step 0: 각도 대기 ---
       if (mode5_step == 0)
       {
-         // 필터 초기화
-         if (mode5_stableStartTime == 0) {
-             filteredAbsAngle = absAngle; 
-         }
+         if (mode5_stableStartTime == 0) { filteredAbsAngle = absAngle; }
 
          float diff = fabs(SetAngle - filteredAbsAngle);
 
@@ -486,7 +482,6 @@ void loop()
          if (diff < 3.0) 
          {
             if (mode5_stableStartTime == 0) mode5_stableStartTime = millis();
-            
             if (millis() - mode5_stableStartTime > 1500) 
             {
                mode5_step = 1; 
@@ -496,12 +491,10 @@ void loop()
                lcd.clear();
             }
          }
-         else 
-         {
-            mode5_stableStartTime = 0; 
-         }
+         else { mode5_stableStartTime = 0; }
       }
 
+      // --- Step 1: 카운트다운 ---
       else if (mode5_step == 1)
       {
          lcd.setCursor(0, 0);
@@ -521,79 +514,145 @@ void loop()
             } else {
                tone(BUZZER_PIN, 2500, 600); 
                
+               // [측정 시작 초기화]
                mode5_step = 2; 
-               mode5_timerStart = millis(); 
-               mode5_swingCount = 0;
+               mode5_swingCount = 0; 
                mode5_prevIntAngle = currentIntAngle; 
                mode5_readyForPeak = false; 
-               mode5_lastPeakTime = millis(); 
-               mode5_lastPeriod = 0.0;
-
+               
+               // 타이머 시작은 아직 하지 않음 (첫 왕복 무시)
+               mode5_timerStart = 0; 
+               
                lcd.clear();
                lcd.setCursor(0, 0);
-               lcd.print("Run: 0     0.00s");
+               lcd.print("Warm-up..."); // 첫 스윙은 준비운동
             }
          }
       }
 
+      // --- Step 2: 스윙 측정 (첫 1회 무시 후 10회 측정) ---
       else if (mode5_step == 2)
       {
          unsigned long currentMillis = millis();
          
-         // 0점 통과 인식: 5도 미만
+         // 0점 통과 인식 (6도 미만)
          if (currentIntAngle < 6) {
             mode5_readyForPeak = true;
          }
 
-         // 정점(Peak) 감지
+         // 정점(Peak) 감지 (12도 초과)
          if (mode5_readyForPeak && (mode5_prevIntAngle > currentIntAngle) && (mode5_prevIntAngle > 12))
          {
-             mode5_swingCount++;
-             
-             unsigned long interval = currentMillis - mode5_lastPeakTime;
-             mode5_lastPeriod = interval / 1000.0; 
-             mode5_lastPeakTime = currentMillis;   
-             
-             mode5_readyForPeak = false; 
-             
+             mode5_swingCount++; // 피크(편도) 카운트 증가
+             mode5_readyForPeak = false; // 잠금
              tone(BUZZER_PIN, 1000, 50); 
+
+             // [수정] 유효 왕복 횟수 계산 로직
+             // Swing 1, 2 (첫 왕복) -> 무시
+             // Swing 2가 되는 순간이 '진짜 시작점' (0회 완료, 타이머 시작)
+             // Swing 4 (두 번째 왕복) -> 유효 1회 완료
+             
+             if (mode5_swingCount == 2) 
+             {
+                 // 첫 번째 왕복(준비운동) 끝! 진짜 측정 시작
+                 mode5_timerStart = millis(); 
+                 lcd.clear();
+                 lcd.setCursor(0, 0);
+                 lcd.print("Start! 0/10");
+                 tone(BUZZER_PIN, 1500, 200); // 시작 알림
+             }
+             else if (mode5_swingCount > 2)
+             {
+                 // 여기서부터 유효 데이터
+                 // (현재 카운트 - 2) / 2 = 유효 왕복 횟수
+                 // 예: 카운트 4 -> (4-2)/2 = 1회 완료
+                 // 예: 카운트 22 -> (22-2)/2 = 10회 완료
+                 
+                 int validPeaks = mode5_swingCount - 2;
+                 
+                 // 짝수 번째 피크일 때만(왕복 완료 시점) 갱신
+                 if (validPeaks % 2 == 0) 
+                 {
+                     int validRoundTrip = validPeaks / 2;
+                     
+                     lcd.setCursor(0, 0);
+                     lcd.print("Count: ");
+                     lcd.print(validRoundTrip);
+                     lcd.print("/10   ");
+
+                     // 10회 유효 왕복 완료 시 종료
+                     if (validRoundTrip >= 10) 
+                     {
+                         mode5_step = 3; 
+                         tone(BUZZER_PIN, 2000, 1000); 
+                         lcd.clear();
+                     }
+                 }
+             }
          }
          
          mode5_prevIntAngle = currentIntAngle;
 
-         lcd.setCursor(0, 0);
-         lcd.print("Cnt:");
-         lcd.print(mode5_swingCount);
-         lcd.print("  T:");
-         lcd.print(mode5_lastPeriod, 2);
-         lcd.print("s ");
-
-         float totalElapsed = (currentMillis - mode5_timerStart) / 1000.0;
-         lcd.setCursor(0, 1);
-         lcd.print("Total: ");
-         lcd.print(totalElapsed, 2);
-         lcd.print(" s   ");
+         // 타이머 표시 (시작된 경우에만)
+         if (mode5_timerStart > 0) {
+             float totalElapsed = (currentMillis - mode5_timerStart) / 1000.0;
+             lcd.setCursor(0, 1);
+             lcd.print("Time: ");
+             lcd.print(totalElapsed, 2);
+             lcd.print(" s   ");
+         }
       }
 
-      // --- [수정] 버튼 로직을 if/else 밖으로 이동하여 언제든 동작하게 함 ---
+      // --- Step 3: 측정 완료 및 결과 표시 ---
+      else if (mode5_step == 3)
+      {
+          unsigned long endTime = millis(); 
+          if (mode5_timerStart > 0) { // 한 번만 계산
+              float totalTimeSec = (endTime - mode5_timerStart) / 1000.0;
+              float avgPeriod = totalTimeSec / 10.0; // 10회 평균
+
+              time_s = avgPeriod;
+              Serial.print("측정된 주기: ");
+              Serial.print(time_s);
+              Serial.println("");
+              
+              lcd.setCursor(0, 0);
+              lcd.print("Avg T: ");
+              lcd.print(avgPeriod, 3); 
+              lcd.print(" s");
+
+              lcd.setCursor(0, 1);
+              lcd.print("Tot: ");
+              lcd.print(totalTimeSec, 2);
+              lcd.print("s (A:Rst)");
+              
+              mode5_timerStart = 0; // 플래그 리셋
+          }
+      }
+
+      // --- 버튼 로직 ---
       
-      // A버튼: 변수 설정(Mode 4)으로 이동
+      // B버튼 (리셋 / 설정이동)
+      if (B_pressed) 
+      {
+        if (mode5_step == 3) { // 결과 화면에서 -> 재측정
+            mode5_step = 0;
+            mode5_stableStartTime = 0;
+            updateLcdDisplay(); 
+        } 
+        else { // 측정 중 -> 설정(Mode 4)으로
+            mode = 4;
+            mode4_editingStep = 0; 
+            mode5_step = 0;
+            mode5_stableStartTime = 0;
+            updateLcdDisplay();
+        }
+      }
+
+      // A버튼 (다음 모드 (mode 4)로 이동)
       if (A_pressed) 
       {
         mode = 4;
-        mode4_editingStep = 0; // 설정 첫 단계로 리셋
-        // mode5 관련 변수도 초기화해주면 좋음
-        mode5_step = 0;
-        mode5_stableStartTime = 0;
-        updateLcdDisplay();
-      }
-
-      // B버튼: 0점 조정(Mode 2)으로 이동
-      if (B_pressed) 
-      {
-        mode = 2;
-        mode2_step = 2; // 캘리브레이션 완료 상태로 진입 (바로 각도 확인 가능)
-        // mode5 관련 변수 초기화
         mode5_step = 0;
         mode5_stableStartTime = 0;
         updateLcdDisplay();
