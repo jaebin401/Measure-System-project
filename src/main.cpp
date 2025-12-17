@@ -124,11 +124,6 @@ void mode4_updateLcd(const char* title, int digits[6], int pos, bool isDone)
   lcd.print(displayString);
   lcd.print("        "); // 잔상 제거
   
-  if (!isDone) {
-      int cursorMap[6] = {6, 5, 3, 2, 1, 0}; 
-      int realCursorMap[6] = {6, 5, 3, 2, 1, 0}; 
-      lcd.setCursor(realCursorMap[pos], 1);
-  }
 }
 
 float mode4_getFinalValue(int digits[6]) {
