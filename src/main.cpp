@@ -8,11 +8,15 @@
 #define BUTTON_B_PIN 3
 #define BUZZER_PIN 9
 #define POT_PIN A1
+#define swing 5
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 AS5600 as5600(&Wire); 
 
+// 모드 지정 전역변수
 int mode = 0;
+
+// 모드 0에서 입력할 초기 스윙 시작 각도
 float SetAngle = 0.0;
 
 // 관성모멘트 계산 물리량
@@ -20,6 +24,7 @@ float mass_kg = 0.0;
 float distance_m = 0.0;  
 float time_s = 0.0;
 
+// 디바운싱 및 부저 알림음 발생 객체 클래스
 class DebouncedButton 
 {
     private:
@@ -93,6 +98,7 @@ class DebouncedButton
 DebouncedButton* buttonA;
 DebouncedButton* buttonB;
 
+// 모드별 상단 문자 lcd 출력 함수, 모드 변경시 매번 실행
 void updateLcdDisplay() 
 {
   lcd.clear(); 
@@ -106,6 +112,7 @@ void updateLcdDisplay()
     case 3: lcd.print("== Measure ==");     break;
     case 4: lcd.print("== Set M & D ==");   break;
     case 5: lcd.print("== Measure Hall =="); break; 
+    case 6: lcd.print("== Inertia Cal =="); break;
   }
   
 }
@@ -206,7 +213,7 @@ void loop()
   static int mode5_countdown = 3;                 
   
   static int mode5_swingCount = 0;         
-  static int mode5_prevIntAngle = 0;   // [수정] 정수형 이전 각도
+  static int mode5_prevIntAngle = 0;  
   static bool mode5_readyForPeak = false; 
   
   switch (mode) 
@@ -391,24 +398,24 @@ void loop()
       }
 
       if (isInputDone) {
-        if (mode4_editingStep == 0) { 
+        if (mode4_editingStep == 0) { // Mass 완료
           mass_kg = mode4_getFinalValue(digits); 
           Serial.print("Mass set to: "); Serial.println(mass_kg);
           
-          mode4_editingStep = 1; 
+          mode4_editingStep = 1; // Distance로 이동
           mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone); 
           mode4_updateLcd("Set Dist. (m)", digits, currentDigitPosition, isInputDone); 
         } 
-        else { 
+        else { // Distance 완료
           distance_m = mode4_getFinalValue(digits); 
           Serial.print("Distance set to: "); Serial.println(distance_m);
           
           mode4_editingStep = 0; 
           isInputDone = false;     
-          mode = 0; 
+          mode = 6; // [흐름 수정] 설정 완료 후 Mode 6(최종 계산)로 이동
+          mode5_step = 0; // Mode 5 초기화
+          mode5_stableStartTime = 0;
           updateLcdDisplay(); 
-          
-          mode5_step = 0; 
         }
       }
       else {
@@ -416,36 +423,59 @@ void loop()
         int newDigit = map(potVal, 0, 1023, 0, 10);
         newDigit = constrain(newDigit, 0, 9);
 
+        // 값 변경 감지 및 LCD 업데이트
         if (newDigit != lastMappedDigit) {
             digits[currentDigitPosition] = newDigit;
             lastMappedDigit = newDigit;
             mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); 
         }
 
+        // A버튼: 다음 자릿수 이동 (Next / Confirm)
         if (A_pressed) {
             currentDigitPosition++;
-            lastMappedDigit = -1; 
+            lastMappedDigit = -1; // 다음 자릿수에서 팟 값 강제 리프레시
+
             if (currentDigitPosition >= 6) { 
-                isInputDone = true; 
+                isInputDone = true; // 6자리 모두 입력하면 완료 플래그
             } else {
-                mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); 
+                mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); // 커서 이동
             }
         }
 
+        // B버튼: 이전 자릿수 이동 (Backspace) 또는 모드 탈출
         if (B_pressed) {
-            mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone);
-            if (mode4_editingStep == 0) { 
-                mode = 5; 
-                mode2_step = 2; 
-                updateLcdDisplay();
-            } else { 
-                mode4_editingStep = 0; 
-                mode4_updateLcd("Set Mass (kg)", digits, currentDigitPosition, isInputDone);
+            
+            if (currentDigitPosition > 0) 
+            {
+                // [수정] 자릿수가 남아있으면 뒤로 가기 (Backspace)
+                currentDigitPosition--;
+                lastMappedDigit = -1; // 이전 자릿수 값 다시 읽기 위해 리셋
+                mode4_updateLcd(title, digits, currentDigitPosition, isInputDone);
+            }
+            else 
+            {
+                // [수정] 가장 낮은 자릿수(0)에서 B를 누르면 -> 이전 단계/모드로 탈출
+                
+                // 현재 Distance 입력 중이었다면 -> Mass 입력으로 돌아가기
+                if (mode4_editingStep == 1) {
+                    mode4_editingStep = 0; 
+                    // Mass 값은 유지되거나 리셋 (여기선 리셋)
+                    mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone);
+                    mode4_updateLcd("Set Mass (kg)", digits, currentDigitPosition, isInputDone);
+                }
+                // 현재 Mass 입력 중이었다면 -> Mode 5(스윙측정)로 탈출
+                else { 
+                    mode = 5; 
+                    mode2_step = 2; // 캘리브레이션 완료 상태
+                    // 입력기 초기화
+                    mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone);
+                    updateLcdDisplay();
+                }
             }
         }
       }
       break;
-    } 
+    }
    
     case 5: 
     {
@@ -558,7 +588,8 @@ void loop()
                  mode5_timerStart = millis(); 
                  lcd.clear();
                  lcd.setCursor(0, 0);
-                 lcd.print("Start! 0/10");
+                 lcd.print("Start! 0/");
+                 lcd.print(swing);
                  tone(BUZZER_PIN, 1500, 200); // 시작 알림
              }
              else if (mode5_swingCount > 2)
@@ -578,10 +609,11 @@ void loop()
                      lcd.setCursor(0, 0);
                      lcd.print("Count: ");
                      lcd.print(validRoundTrip);
-                     lcd.print("/10   ");
+                     lcd.print("/");
+                     lcd.print(swing);
 
-                     // 10회 유효 왕복 완료 시 종료
-                     if (validRoundTrip >= 10) 
+                     // swing회 유효 왕복 완료 시 종료
+                     if (validRoundTrip >= swing) 
                      {
                          mode5_step = 3; 
                          tone(BUZZER_PIN, 2000, 1000); 
@@ -609,7 +641,8 @@ void loop()
           unsigned long endTime = millis(); 
           if (mode5_timerStart > 0) { // 한 번만 계산
               float totalTimeSec = (endTime - mode5_timerStart) / 1000.0;
-              float avgPeriod = totalTimeSec / 10.0; // 10회 평균
+              float avg = swing;
+              float avgPeriod = totalTimeSec / avg; // 10회 평균
 
               time_s = avgPeriod;
               Serial.print("측정된 주기: ");
@@ -624,7 +657,7 @@ void loop()
               lcd.setCursor(0, 1);
               lcd.print("Tot: ");
               lcd.print(totalTimeSec, 2);
-              lcd.print("s (A:Rst)");
+              lcd.print("s");
               
               mode5_timerStart = 0; // 플래그 리셋
           }
@@ -641,7 +674,7 @@ void loop()
             updateLcdDisplay(); 
         } 
         else { // 측정 중 -> 설정(Mode 4)으로
-            mode = 4;
+            mode = 2;
             mode4_editingStep = 0; 
             mode5_step = 0;
             mode5_stableStartTime = 0;
@@ -658,6 +691,46 @@ void loop()
         updateLcdDisplay();
       }
       
+      break;
+    }
+
+    case 6:
+    {
+      // 1. 관성모멘트 계산
+      float T = time_s;
+      float M = mass_kg;
+      float D = distance_m;
+      float g = 9.80665;
+      float PI_VAL = 3.14159265;
+
+      float I_value = 0.0;
+      if (M > 0 && D > 0) { // 0으로 나누기 방지 및 유효성 체크
+          I_value = (T * T * M * g * D) / (4 * PI_VAL * PI_VAL);
+      }
+
+      // 2. LCD 출력
+      lcd.setCursor(0, 0);
+      lcd.print("I=");
+      lcd.print(I_value, 5); // 공간 확보를 위해 소수점 5자리
+      lcd.print(" kgm^2 ");
+
+      lcd.setCursor(0, 1);
+      lcd.print("A:Reset B:Back");
+
+      // 3. 버튼 로직
+      if (A_pressed) 
+      {
+        mode = 0; // 처음부터 다시 시작
+        Serial.println("Reset to Mode 0");
+        updateLcdDisplay();
+      }
+
+      if (B_pressed) 
+      {
+        mode = 5; // 재측정 하러 가기
+        // (주의: mode 5로 가면 step 3 상태일 수 있음. A/B 눌러서 리셋 필요)
+        updateLcdDisplay();
+      }
       break;
     }
   }
