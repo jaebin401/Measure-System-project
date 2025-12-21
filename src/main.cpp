@@ -8,7 +8,7 @@
 #define BUTTON_B_PIN 3
 #define BUZZER_PIN 9
 #define POT_PIN A1
-#define swing 5
+#define swing 10
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 AS5600 as5600(&Wire); 
