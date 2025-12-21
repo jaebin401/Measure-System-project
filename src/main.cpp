@@ -4,17 +4,22 @@
 #include <math.h> 
 #include <AS5600.h>
 
+// ==================== 핀 설정 ====================
 #define BUTTON_A_PIN 2
 #define BUTTON_B_PIN 3
 #define BUZZER_PIN 9
 #define POT_PIN A1
-#define swing 10
+#define PHOTO_PIN 5       // [추가] 포토 인터럽터 핀 (기존 4번은 AS5600 충돌 가능성으로 5번 권장)
 
+#define swing 10          // 측정할 왕복 횟수
+
+// ==================== 객체 생성 ====================
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 AS5600 as5600(&Wire); 
 
-// 모드 지정 전역변수
+// ==================== 전역 변수 ====================
 int mode = 0;
+int measureSourceMode = 5; // [추가] 측정 모드가 어디였는지 기억 (3=Photo, 5=Hall)
 
 // 모드 0에서 입력할 초기 스윙 시작 각도
 float SetAngle = 0.0;
@@ -22,9 +27,9 @@ float SetAngle = 0.0;
 // 관성모멘트 계산 물리량
 float mass_kg = 0.0;     
 float distance_m = 0.0;  
-float time_s = 0.0;
+float time_s = 0.0;      // 측정된 주기(T)
 
-// 디바운싱 및 부저 알림음 발생 객체 클래스
+// ==================== 클래스 정의 ====================
 class DebouncedButton 
 {
     private:
@@ -98,7 +103,9 @@ class DebouncedButton
 DebouncedButton* buttonA;
 DebouncedButton* buttonB;
 
-// 모드별 상단 문자 lcd 출력 함수, 모드 변경시 매번 실행
+// ==================== 함수 정의 ====================
+
+// 모드 변경 시 LCD 초기화 함수
 void updateLcdDisplay() 
 {
   lcd.clear(); 
@@ -108,30 +115,27 @@ void updateLcdDisplay()
   {
     case 0: lcd.print("== Set angle ==");   break;
     case 1: lcd.print("== which mode? =="); break;
-    case 2: lcd.print("== Hall mode ==");   break;
-    case 3: lcd.print("== Measure ==");     break;
+    case 2: lcd.print("== Hall Cal. ==");   break;
+    case 3: lcd.print("== Photo Mode ==");  break; // [변경] TBD -> Photo Mode
     case 4: lcd.print("== Set M & D ==");   break;
-    case 5: lcd.print("== Measure Hall =="); break; 
+    case 5: lcd.print("== Hall Mode ==");   break; 
     case 6: lcd.print("== Inertia Cal =="); break;
   }
-  
 }
 
+// Mode 4용 화면 업데이트 헬퍼
 void mode4_updateLcd(const char* title, int digits[6], int pos, bool isDone) 
 {
-  // 1행 제목 표시
   lcd.clear(); 
   lcd.setCursor(0, 0); 
   lcd.print(title);
 
-  // 2행 "XXXX.XX" 형식으로 숫자 문자열 생성
   char displayString[10];
   sprintf(displayString, "%d%d%d%d.%d%d", 
           digits[5], digits[4], digits[3], digits[2], digits[1], digits[0]);
   lcd.setCursor(0, 1);
   lcd.print(displayString);
-  lcd.print("        "); // 잔상 제거
-
+  lcd.print("        "); 
 }
 
 float mode4_getFinalValue(int digits[6]) {
@@ -154,8 +158,12 @@ void mode4_resetInput(int digits[6], int& pos, int& lastDigit, bool& isDone) {
   isDone = false;
 }
 
+// ==================== SETUP ====================
 void setup() 
 {
+  // 핀 설정
+  pinMode(PHOTO_PIN, INPUT_PULLUP); // [추가] 포토 인터럽터
+
   buttonA = new DebouncedButton(BUTTON_A_PIN);
   buttonB = new DebouncedButton(BUTTON_B_PIN);
 
@@ -173,8 +181,7 @@ void setup()
   Serial.println("===== Serial initialization =====");
 
   Serial.println("Checking for AS5600...");
-  
-  as5600.begin(4); 
+  as5600.begin(4); // AS5600 direction pin
   if (as5600.isConnected() == false) { 
       Serial.println("AS5600 not detected! Check wiring.");
       lcd.clear();
@@ -184,28 +191,42 @@ void setup()
   Serial.println("AS5600 found!");
 
   updateLcdDisplay();
-  Serial.print("Current mode: ");
-  Serial.println(mode);
 }
 
+// ==================== LOOP ====================
 void loop() 
 {
   bool A_pressed = buttonA->checkPressed();
   bool B_pressed = buttonB->checkPressed();
 
-  static int mode1_selection = 0;
+  // ----- Mode 1 (Selection) 변수 -----
+  static int mode1_selection = 0; // 0: Hall, 1: Photo
 
+  // ----- Mode 2 (Hall Calib) 변수 -----
   static int mode2_step = 0; 
   static float angleOffset = 0.0; 
   static unsigned long stableStartTime = 0; 
   static float lastStableValue = -1.0;
   
+  // ----- Mode 3 (Photo Measure) 변수 [신규] -----
+  static int mode3_step = 0;
+  static unsigned long mode3_stableStartTime = 0;
+  static unsigned long mode3_timerStart = 0;
+  static unsigned long mode3_prevTime = 0;
+  static int mode3_countdown = 3;
+  
+  static int mode3_hitCount = 0;
+  static int mode3_lastPhotoState = HIGH;
+  static unsigned long mode3_lastHitMs = 0;
+
+  // ----- Mode 4 (Input M & D) 변수 -----
   static int mode4_editingStep = 0; 
   static int digits[6] = {0, 0, 0, 0, 0, 0}; 
   static int currentDigitPosition = 0; 
   static int lastMappedDigit = -1;     
   static bool isInputDone = false;      
 
+  // ----- Mode 5 (Hall Measure) 변수 -----
   static int mode5_step = 0; 
   static unsigned long mode5_stableStartTime = 0; 
   static unsigned long mode5_timerStart = 0;      
@@ -215,259 +236,355 @@ void loop()
   static int mode5_swingCount = 0;         
   static int mode5_prevIntAngle = 0;  
   static bool mode5_readyForPeak = false; 
-  
+
   switch (mode) 
   {
-    case 0: // setting angle mode
+    // ======================================================
+    // Mode 0: Set Target Angle (초기 각도 설정)
+    // ======================================================
+    case 0: 
     {
       float potVal = analogRead(POT_PIN);
       float angle = map(potVal, 0, 1020, 0, 300) / 10.0;
 
       lcd.setCursor(1, 1);
       lcd.print(" Angle: ");
-      
-      lcd.setCursor(9, 1);
       lcd.print(angle, 1);
 
       if (A_pressed) 
       {
-        mode++;
-        Serial.print("Button A clicked, currne mode: ");
-        Serial.println(mode);
+        mode++; // -> Mode 1
         SetAngle = angle;
-        Serial.print("setting angle: ");
-        Serial.println(SetAngle);
         updateLcdDisplay();
-        mode2_step = 0; 
-
       }
       break;
     }
 
+    // ======================================================
+    // Mode 1: Select Sensor (Hall vs Photo)
+    // ======================================================
     case 1:
     {
       lcd.setCursor(0, 1); 
-      
-      if (mode1_selection == 0) 
-      {
-        lcd.print("[Hall] |  Photo ");
-      } 
-      else 
-      {
-        lcd.print(" Hall  | [Photo] ");
-      }
+      if (mode1_selection == 0) lcd.print("[Hall] |  Photo ");
+      else                      lcd.print(" Hall  | [Photo] ");
 
+      // B버튼: 선택 변경
       if (B_pressed) 
       {
-        if (mode1_selection == 0) 
-        {
-            mode = 2; 
-            Serial.print("Button A confirmed, current mode: ");
-            Serial.println(mode);
-            updateLcdDisplay();
-            mode2_step = 0; 
-        } 
-        else 
-        {
-            mode1_selection = 0; 
-        }
+         mode1_selection = !mode1_selection;
       }
 
+      // A버튼: 확정
       if (A_pressed) 
       {
-        if (mode1_selection == 1) 
+        if (mode1_selection == 0) // Hall 선택
         {
-            mode = 3; 
-            Serial.print("Button B confirmed, current mode: ");
-            Serial.println(mode);
-            updateLcdDisplay();
-        }
-        else 
+            mode = 2; // Hall Calibration으로 이동
+            measureSourceMode = 5; // 나중을 위해 기록
+            mode2_step = 0;
+        } 
+        else // Photo 선택
         {
-            mode1_selection = 1; 
+            mode = 2; // Photo도 각도 확인 위해 Hall Calib 먼저 수행
+            measureSourceMode = 3; // 나중을 위해 기록
+            mode2_step = 0; 
         }
+        updateLcdDisplay();
       }
       break;
     }
     
-    case 2: // hall sensor calibration mode
+    // ======================================================
+    // Mode 2: Hall Sensor Calibration (0점 잡기)
+    // ======================================================
+    case 2: 
     {
       int rawAngle = as5600.readAngle();
       float currentAngle = (float)rawAngle * 360.0 / 4096.0;
 
-      if (mode2_step == 0)
+      if (mode2_step == 0) // 대기
       {
         lcd.setCursor(0, 1);
-        lcd.print("Raw: ");
-        lcd.print(currentAngle, 2);
-        lcd.print(" deg  ");
+        lcd.print("Raw: "); lcd.print(currentAngle, 2); lcd.print("   ");
 
-        if (A_pressed) 
-        {
+        if (A_pressed) {
           mode2_step = 1; 
           stableStartTime = millis(); 
           lastStableValue = currentAngle; 
-          lcd.setCursor(0, 1);
-          lcd.print("Waiting static...");
-          Serial.println("Calibration step 1: Waiting for static...");
+          lcd.setCursor(0, 1); lcd.print("Waiting static...");
         }
-
-        if (B_pressed) 
-        {
-          mode--; 
-          Serial.print("Button B clicked, current mode: ");
-          Serial.println(mode);
-          updateLcdDisplay();
+        if (B_pressed) {
+          mode = 1; updateLcdDisplay();
         }
       }
-      
-      else if (mode2_step == 1)
+      else if (mode2_step == 1) // 안정화 감지
       {
         int currentIntAngle = (int)currentAngle;
         int lastIntAngle = (int)lastStableValue;
 
-        if (currentIntAngle != lastIntAngle) 
-        {
+        if (currentIntAngle != lastIntAngle) {
           stableStartTime = millis(); 
           lastStableValue = currentAngle; 
         }
 
-        if (millis() - stableStartTime > 2000) 
-        {
+        if (millis() - stableStartTime > 2000) {
           angleOffset = currentAngle; 
           mode2_step = 2; 
-          Serial.print("Zero point set at: "); Serial.println(angleOffset);
-          lcd.setCursor(0, 1);
-          lcd.print("Calibrated!     ");
+          lcd.setCursor(0, 1); lcd.print("Calibrated!     ");
           delay(1000); 
         }
       }
-
-      else if (mode2_step == 2)
+      else if (mode2_step == 2) // 확인
       {
         float calibratedAngle = currentAngle - angleOffset;
-
         if (calibratedAngle > 180.0) calibratedAngle -= 360.0;
         else if (calibratedAngle < -180.0) calibratedAngle += 360.0;
         
         lcd.setCursor(0, 1);
         lcd.print("Angle: ");
         if (calibratedAngle > 0) lcd.print("+"); 
-        lcd.print(calibratedAngle, 2);
-        lcd.print(" deg  ");
+        lcd.print(calibratedAngle, 2); lcd.print(" deg   ");
 
-        if (A_pressed) 
-        {
-          mode=5; 
-          Serial.print("Button A clicked, currne mode: ");
-          Serial.println(mode);
+        if (A_pressed) {
+          // 측정 모드에 따라 분기
+          if (measureSourceMode == 5) mode = 5; // Hall Measure
+          else                        mode = 3; // Photo Measure
           updateLcdDisplay();
         }
-
-        if (B_pressed) 
-        {
-          mode--; 
-          Serial.print("Button B clicked, current mode: ");
-          Serial.println(mode);
-          updateLcdDisplay();
+        if (B_pressed) {
+          mode = 1; updateLcdDisplay();
         }
       }
-      
       break; 
     }
 
+    // ======================================================
+    // Mode 3: Photo Interrupter Measure (신규 구현)
+    // ======================================================
     case 3: 
     {       
-      lcd.setCursor(0, 1);
-      lcd.print("Photo Mode (TBD)");
-      
-      if (A_pressed || B_pressed) {
-          mode = 1; 
+      // --- 각도 계산 (AS5600 사용 - 초기 위치 잡기용) ---
+      int rawAngle = as5600.readAngle();
+      float currentAngle = (float)rawAngle * 360.0 / 4096.0;
+      float calibratedAngle = currentAngle - angleOffset;
+      if (calibratedAngle > 180.0) calibratedAngle -= 360.0;
+      else if (calibratedAngle < -180.0) calibratedAngle += 360.0;
+      float absAngle = fabs(calibratedAngle);
+
+      // --- Step 0: 각도 맞추기 (Mode 5와 동일 로직) ---
+      if (mode3_step == 0)
+      {
+         float diff = fabs(SetAngle - absAngle);
+         
+         lcd.setCursor(0, 1);
+         lcd.print("Go to: "); lcd.print(SetAngle, 1);
+         lcd.print(" ("); lcd.print(absAngle, 1); lcd.print(") ");
+
+         if (diff < 3.0) 
+         {
+            if (mode3_stableStartTime == 0) mode3_stableStartTime = millis();
+            if (millis() - mode3_stableStartTime > 1500) 
+            {
+               mode3_step = 1; // 카운트다운 진입
+               mode3_countdown = 3;
+               mode3_prevTime = millis();
+               tone(BUZZER_PIN, 1500, 100); 
+               lcd.clear();
+            }
+         }
+         else { mode3_stableStartTime = 0; }
+      }
+
+      // --- Step 1: 카운트다운 ---
+      else if (mode3_step == 1)
+      {
+         lcd.setCursor(0, 0); lcd.print("== Ready? ==");
+         lcd.setCursor(0, 1); lcd.print("Start in "); lcd.print(mode3_countdown); lcd.print("...    ");
+
+         if (millis() - mode3_prevTime >= 1000) 
+         {
+            mode3_countdown--;
+            mode3_prevTime = millis();
+            if (mode3_countdown > 0) {
+               tone(BUZZER_PIN, 800, 100); 
+            } else {
+               tone(BUZZER_PIN, 2500, 600); 
+               // 측정 시작 초기화
+               mode3_step = 2; 
+               mode3_hitCount = 0;
+               mode3_timerStart = 0; 
+               mode3_lastPhotoState = digitalRead(PHOTO_PIN); // 초기 상태 읽기
+               
+               lcd.clear();
+               lcd.setCursor(0, 0); lcd.print("Release!");
+               lcd.setCursor(0, 1); lcd.print("Waiting sensor..");
+            }
+         }
+      }
+
+      // --- Step 2: 측정 (포토 인터럽터) ---
+      else if (mode3_step == 2)
+      {
+          int photoState = digitalRead(PHOTO_PIN);
+          unsigned long now = millis();
+
+          // 엣지 감지: 막힘 (Beam Broken, 보통 LOW)
+          // PHOTO_PIN이 평소 HIGH(Pullup)이고 막히면 LOW라고 가정 (일반적 BUP-50S 등)
+          // photo_final.cpp 로직 참조: HIGH -> LOW 일 때 blockActive
+          if (mode3_lastPhotoState == HIGH && photoState == LOW) 
+          {
+             // 디바운싱: 너무 빠른 연속 감지 방지 (예: 50ms)
+             if (now - mode3_lastHitMs > 50) 
+             {
+                 mode3_hitCount++;
+                 mode3_lastHitMs = now;
+                 tone(BUZZER_PIN, 1200, 50); // 짧은 삑
+
+                 // === 로직 설명 ===
+                 // Hit 1: 첫 번째 통과 (최저점). 타이머 시작.
+                 // Hit 2: 반대편 갔다가 돌아옴 (1/2 주기) -> 진자 1회 통과
+                 // Hit 3: 다시 원래 방향 (1 주기 완료) -> 진자 2회 통과
+                 // ...
+                 // 우리는 'swing'번의 왕복을 측정하고 싶음.
+                 // 1회 왕복 = 2번의 통과 (왔다 갔다)
+                 // 따라서 swing * 2 번의 추가 통과가 필요함.
+                 // 시작점(Hit 1)을 0초로 잡으면, Hit (1 + swing*2) 에서 멈춰야 함.
+                 
+                 if (mode3_hitCount == 1) 
+                 {
+                     mode3_timerStart = now;
+                     lcd.clear();
+                     lcd.setCursor(0, 0);
+                     lcd.print("Measuring...");
+                 }
+                 else 
+                 {
+                     // 진행 상황 표시 (왕복 횟수)
+                     int currentRoundTrip = (mode3_hitCount - 1) / 2;
+                     lcd.setCursor(0, 1);
+                     lcd.print("Count: "); lcd.print(currentRoundTrip); 
+                     lcd.print("/"); lcd.print(swing);
+
+                     // 종료 조건: 목표 왕복 횟수 채움
+                     if (mode3_hitCount >= (1 + swing * 2)) 
+                     {
+                         mode3_step = 3;
+                         tone(BUZZER_PIN, 2000, 800);
+                     }
+                 }
+             }
+          }
+          mode3_lastPhotoState = photoState;
+      }
+
+      // --- Step 3: 결과 표시 ---
+      else if (mode3_step == 3)
+      {
+          // 계산
+          if (mode3_timerStart > 0) {
+              unsigned long endTime = mode3_lastHitMs; // 마지막 히트 시각
+              float totalTimeSec = (endTime - mode3_timerStart) / 1000.0;
+              time_s = totalTimeSec / (float)swing; // 평균 주기
+
+              lcd.clear();
+              lcd.setCursor(0, 0); lcd.print("T_avg: "); lcd.print(time_s, 3); lcd.print("s");
+              lcd.setCursor(0, 1); lcd.print("Tot: "); lcd.print(totalTimeSec, 2); lcd.print("s");
+
+              mode3_timerStart = 0; // 플래그 리셋하여 계산 1회만 수행
+          }
+
+          // A버튼: 다음(입력 모드)
+          if (A_pressed) {
+              mode = 4; // 입력 모드로
+              mode4_editingStep = 0;
+              updateLcdDisplay();
+          }
+          // B버튼: 재측정
+          if (B_pressed) {
+              mode3_step = 0;
+              mode3_stableStartTime = 0;
+              updateLcdDisplay();
+          }
+      }
+
+      // 측정 도중(Step 0~2) B버튼 누르면 설정 취소
+      if (mode3_step < 3 && B_pressed) {
+          mode = 2; // 다시 Calib 화면이나 모드 선택으로
           updateLcdDisplay();
       }
       break;
     }
 
+    // ======================================================
+    // Mode 4: Input Variables (Mass & Distance)
+    // ======================================================
     case 4:
     {
       const char* title;
-      if (mode4_editingStep == 0) {
-        title = "Set Mass (kg)";
-      } else {
-        title = "Set Dist. (m)";
-      }
+      if (mode4_editingStep == 0) title = "Set Mass (kg)";
+      else                        title = "Set Dist. (m)";
 
-      if (isInputDone) {
+      if (isInputDone) 
+      {
         if (mode4_editingStep == 0) { // Mass 완료
           mass_kg = mode4_getFinalValue(digits); 
-          Serial.print("Mass set to: "); Serial.println(mass_kg);
-          
-          mode4_editingStep = 1; // Distance로 이동
+          mode4_editingStep = 1; 
           mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone); 
           mode4_updateLcd("Set Dist. (m)", digits, currentDigitPosition, isInputDone); 
         } 
-        else { // Distance 완료
+        else { // Distance 완료 -> 결과 계산 모드(6)로
           distance_m = mode4_getFinalValue(digits); 
-          Serial.print("Distance set to: "); Serial.println(distance_m);
           
           mode4_editingStep = 0; 
           isInputDone = false;     
-          mode = 6; // [흐름 수정] 설정 완료 후 Mode 6(최종 계산)로 이동
-          mode5_step = 0; // Mode 5 초기화
-          mode5_stableStartTime = 0;
+          mode = 6; 
           updateLcdDisplay(); 
         }
       }
-      else {
+      else 
+      {
         int potVal = analogRead(POT_PIN);
         int newDigit = map(potVal, 0, 1023, 0, 10);
         newDigit = constrain(newDigit, 0, 9);
 
-        // 값 변경 감지 및 LCD 업데이트
         if (newDigit != lastMappedDigit) {
             digits[currentDigitPosition] = newDigit;
             lastMappedDigit = newDigit;
             mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); 
         }
 
-        // A버튼: 다음 자릿수 이동 (Next / Confirm)
         if (A_pressed) {
             currentDigitPosition++;
-            lastMappedDigit = -1; // 다음 자릿수에서 팟 값 강제 리프레시
-
-            if (currentDigitPosition >= 6) { 
-                isInputDone = true; // 6자리 모두 입력하면 완료 플래그
-            } else {
-                mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); // 커서 이동
-            }
+            lastMappedDigit = -1; 
+            if (currentDigitPosition >= 6) isInputDone = true; 
+            else mode4_updateLcd(title, digits, currentDigitPosition, isInputDone); 
         }
 
-        // B버튼: 이전 자릿수 이동 (Backspace) 또는 모드 탈출
         if (B_pressed) {
-            
-            if (currentDigitPosition > 0) 
-            {
-                // [수정] 자릿수가 남아있으면 뒤로 가기 (Backspace)
+            if (currentDigitPosition > 0) {
                 currentDigitPosition--;
-                lastMappedDigit = -1; // 이전 자릿수 값 다시 읽기 위해 리셋
+                lastMappedDigit = -1; 
                 mode4_updateLcd(title, digits, currentDigitPosition, isInputDone);
             }
-            else 
-            {
-                // [수정] 가장 낮은 자릿수(0)에서 B를 누르면 -> 이전 단계/모드로 탈출
-                
-                // 현재 Distance 입력 중이었다면 -> Mass 입력으로 돌아가기
-                if (mode4_editingStep == 1) {
+            else {
+                // [탈출 로직 수정] 이전 단계나 측정 모드로 복귀
+                if (mode4_editingStep == 1) { // Distance -> Mass
                     mode4_editingStep = 0; 
-                    // Mass 값은 유지되거나 리셋 (여기선 리셋)
                     mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone);
                     mode4_updateLcd("Set Mass (kg)", digits, currentDigitPosition, isInputDone);
                 }
-                // 현재 Mass 입력 중이었다면 -> Mode 5(스윙측정)로 탈출
-                else { 
-                    mode = 5; 
-                    mode2_step = 2; // 캘리브레이션 완료 상태
-                    // 입력기 초기화
+                else { // Mass -> 측정 모드(Photo or Hall)로 복귀
+                    mode = measureSourceMode; // 3 or 5
+                    
+                    // 각 모드 초기화
+                    if(mode == 5) { mode5_step = 3; } // 결과 화면으로? 아니면 0으로
+                    else          { mode3_step = 3; } 
+                    
+                    // 바로 재측정 대기 상태로 보내고 싶다면:
+                    if(mode == 5) { mode5_step = 0; mode5_stableStartTime=0; }
+                    else          { mode3_step = 0; mode3_stableStartTime=0; }
+
                     mode4_resetInput(digits, currentDigitPosition, lastMappedDigit, isInputDone);
                     updateLcdDisplay();
                 }
@@ -477,43 +594,34 @@ void loop()
       break;
     }
    
+    // ======================================================
+    // Mode 5: Hall Sensor Measure (기존 유지)
+    // ======================================================
     case 5: 
     {
       int rawAngle = as5600.readAngle();
       float currentAngle = (float)rawAngle * 360.0 / 4096.0;
       float calibratedAngle = currentAngle - angleOffset;
-      
       if (calibratedAngle > 180.0) calibratedAngle -= 360.0;
       else if (calibratedAngle < -180.0) calibratedAngle += 360.0;
-      
       float absAngle = fabs(calibratedAngle); 
 
-      // 노이즈 필터링 (이동 평균)
       static float filteredAbsAngle = 0.0;
       filteredAbsAngle = (filteredAbsAngle * 0.2) + (absAngle * 0.8);
-      
-      // 정수형 변환
       int currentIntAngle = (int)filteredAbsAngle;
 
-      // --- Step 0: 각도 대기 ---
+      // --- Step 0 ---
       if (mode5_step == 0)
       {
          if (mode5_stableStartTime == 0) { filteredAbsAngle = absAngle; }
-
          float diff = fabs(SetAngle - filteredAbsAngle);
-
          lcd.setCursor(0, 1);
-         lcd.print("Go to: ");
-         lcd.print(SetAngle, 1);
-         lcd.print(" (");
-         lcd.print(filteredAbsAngle, 1); 
-         lcd.print(")  "); 
+         lcd.print("Go to: "); lcd.print(SetAngle, 1);
+         lcd.print(" ("); lcd.print(filteredAbsAngle, 1); lcd.print(")  "); 
 
-         if (diff < 3.0) 
-         {
+         if (diff < 3.0) {
             if (mode5_stableStartTime == 0) mode5_stableStartTime = millis();
-            if (millis() - mode5_stableStartTime > 1500) 
-            {
+            if (millis() - mode5_stableStartTime > 1500) {
                mode5_step = 1; 
                mode5_countdown = 3;
                mode5_prevTime = millis();
@@ -523,98 +631,50 @@ void loop()
          }
          else { mode5_stableStartTime = 0; }
       }
-
-      // --- Step 1: 카운트다운 ---
+      // --- Step 1 ---
       else if (mode5_step == 1)
       {
-         lcd.setCursor(0, 0);
-         lcd.print("== Ready? ==");
-         lcd.setCursor(0, 1);
-         lcd.print("Start in ");
-         lcd.print(mode5_countdown);
-         lcd.print("...    ");
-
-         if (millis() - mode5_prevTime >= 1000) 
-         {
+         lcd.setCursor(0, 0); lcd.print("== Ready? ==");
+         lcd.setCursor(0, 1); lcd.print("Start in "); lcd.print(mode5_countdown); lcd.print("...    ");
+         if (millis() - mode5_prevTime >= 1000) {
             mode5_countdown--;
             mode5_prevTime = millis();
-            
-            if (mode5_countdown > 0) {
-               tone(BUZZER_PIN, 800, 100); 
-            } else {
+            if (mode5_countdown > 0) tone(BUZZER_PIN, 800, 100); 
+            else {
                tone(BUZZER_PIN, 2500, 600); 
-               
-               // [측정 시작 초기화]
                mode5_step = 2; 
                mode5_swingCount = 0; 
                mode5_prevIntAngle = currentIntAngle; 
                mode5_readyForPeak = false; 
-               
-               // 타이머 시작은 아직 하지 않음 (첫 왕복 무시)
                mode5_timerStart = 0; 
-               
-               lcd.clear();
-               lcd.setCursor(0, 0);
-               lcd.print("Warm-up..."); // 첫 스윙은 준비운동
+               lcd.clear(); lcd.setCursor(0, 0); lcd.print("Warm-up..."); 
             }
          }
       }
-
-      // --- Step 2: 스윙 측정 (첫 1회 무시 후 10회 측정) ---
+      // --- Step 2 ---
       else if (mode5_step == 2)
       {
          unsigned long currentMillis = millis();
+         if (currentIntAngle < 6) mode5_readyForPeak = true;
          
-         // 0점 통과 인식 (6도 미만)
-         if (currentIntAngle < 6) {
-            mode5_readyForPeak = true;
-         }
-
-         // 정점(Peak) 감지 (12도 초과)
          if (mode5_readyForPeak && (mode5_prevIntAngle > currentIntAngle) && (mode5_prevIntAngle > 12))
          {
-             mode5_swingCount++; // 피크(편도) 카운트 증가
-             mode5_readyForPeak = false; // 잠금
+             mode5_swingCount++; 
+             mode5_readyForPeak = false; 
              tone(BUZZER_PIN, 1000, 50); 
 
-             // [수정] 유효 왕복 횟수 계산 로직
-             // Swing 1, 2 (첫 왕복) -> 무시
-             // Swing 2가 되는 순간이 '진짜 시작점' (0회 완료, 타이머 시작)
-             // Swing 4 (두 번째 왕복) -> 유효 1회 완료
-             
-             if (mode5_swingCount == 2) 
-             {
-                 // 첫 번째 왕복(준비운동) 끝! 진짜 측정 시작
+             if (mode5_swingCount == 2) {
                  mode5_timerStart = millis(); 
-                 lcd.clear();
-                 lcd.setCursor(0, 0);
-                 lcd.print("Start! 0/");
-                 lcd.print(swing);
-                 tone(BUZZER_PIN, 1500, 200); // 시작 알림
+                 lcd.clear(); lcd.setCursor(0, 0); lcd.print("Start! 0/"); lcd.print(swing);
+                 tone(BUZZER_PIN, 1500, 200); 
              }
-             else if (mode5_swingCount > 2)
-             {
-                 // 여기서부터 유효 데이터
-                 // (현재 카운트 - 2) / 2 = 유효 왕복 횟수
-                 // 예: 카운트 4 -> (4-2)/2 = 1회 완료
-                 // 예: 카운트 22 -> (22-2)/2 = 10회 완료
-                 
+             else if (mode5_swingCount > 2) {
                  int validPeaks = mode5_swingCount - 2;
-                 
-                 // 짝수 번째 피크일 때만(왕복 완료 시점) 갱신
-                 if (validPeaks % 2 == 0) 
-                 {
+                 if (validPeaks % 2 == 0) {
                      int validRoundTrip = validPeaks / 2;
-                     
                      lcd.setCursor(0, 0);
-                     lcd.print("Count: ");
-                     lcd.print(validRoundTrip);
-                     lcd.print("/");
-                     lcd.print(swing);
-
-                     // swing회 유효 왕복 완료 시 종료
-                     if (validRoundTrip >= swing) 
-                     {
+                     lcd.print("Count: "); lcd.print(validRoundTrip); lcd.print("/"); lcd.print(swing);
+                     if (validRoundTrip >= swing) {
                          mode5_step = 3; 
                          tone(BUZZER_PIN, 2000, 1000); 
                          lcd.clear();
@@ -622,118 +682,83 @@ void loop()
                  }
              }
          }
-         
          mode5_prevIntAngle = currentIntAngle;
 
-         // 타이머 표시 (시작된 경우에만)
          if (mode5_timerStart > 0) {
              float totalElapsed = (currentMillis - mode5_timerStart) / 1000.0;
-             lcd.setCursor(0, 1);
-             lcd.print("Time: ");
-             lcd.print(totalElapsed, 2);
-             lcd.print(" s   ");
+             lcd.setCursor(0, 1); lcd.print("Time: "); lcd.print(totalElapsed, 2); lcd.print(" s   ");
          }
       }
-
-      // --- Step 3: 측정 완료 및 결과 표시 ---
+      // --- Step 3 ---
       else if (mode5_step == 3)
       {
           unsigned long endTime = millis(); 
-          if (mode5_timerStart > 0) { // 한 번만 계산
+          if (mode5_timerStart > 0) { 
               float totalTimeSec = (endTime - mode5_timerStart) / 1000.0;
-              float avg = swing;
-              float avgPeriod = totalTimeSec / avg; // 10회 평균
+              time_s = totalTimeSec / swing; 
 
-              time_s = avgPeriod;
-              Serial.print("측정된 주기: ");
-              Serial.print(time_s);
-              Serial.println("");
-              
-              lcd.setCursor(0, 0);
-              lcd.print("Avg T: ");
-              lcd.print(avgPeriod, 3); 
-              lcd.print(" s");
-
-              lcd.setCursor(0, 1);
-              lcd.print("Tot: ");
-              lcd.print(totalTimeSec, 2);
-              lcd.print("s");
-              
-              mode5_timerStart = 0; // 플래그 리셋
+              lcd.setCursor(0, 0); lcd.print("Avg T: "); lcd.print(time_s, 3); lcd.print(" s");
+              lcd.setCursor(0, 1); lcd.print("Tot: "); lcd.print(totalTimeSec, 2); lcd.print("s");
+              mode5_timerStart = 0; 
+          }
+          if (A_pressed) {
+              mode = 4; // 입력 모드로
+              mode4_editingStep = 0;
+              updateLcdDisplay();
+          }
+          if (B_pressed) {
+            mode5_step = 0; mode5_stableStartTime = 0; updateLcdDisplay(); 
           }
       }
-
-      // --- 버튼 로직 ---
-      
-      // B버튼 (리셋 / 설정이동)
-      if (B_pressed) 
-      {
-        if (mode5_step == 3) { // 결과 화면에서 -> 재측정
-            mode5_step = 0;
-            mode5_stableStartTime = 0;
-            updateLcdDisplay(); 
-        } 
-        else { // 측정 중 -> 설정(Mode 4)으로
-            mode = 2;
-            mode4_editingStep = 0; 
-            mode5_step = 0;
-            mode5_stableStartTime = 0;
-            updateLcdDisplay();
-        }
+      // Step 0~2에서 B 누르면
+      if (mode5_step < 3 && B_pressed) {
+          mode = 2; updateLcdDisplay();
       }
-
-      // A버튼 (다음 모드 (mode 4)로 이동)
-      if (A_pressed) 
-      {
-        mode = 4;
-        mode5_step = 0;
-        mode5_stableStartTime = 0;
-        updateLcdDisplay();
-      }
-      
       break;
     }
 
+    // ======================================================
+    // Mode 6: Calculation Result
+    // ======================================================
     case 6:
     {
-      // 1. 관성모멘트 계산
       float T = time_s;
       float M = mass_kg;
       float D = distance_m;
       float g = 9.80665;
       float PI_VAL = 3.14159265;
-
       float I_value = 0.0;
-      if (M > 0 && D > 0) { // 0으로 나누기 방지 및 유효성 체크
-          I_value = (T * T * M * g * D) / (4 * PI_VAL * PI_VAL);
-      }
+      
+      if (M > 0 && D > 0) I_value = (T * T * M * g * D) / (4 * PI_VAL * PI_VAL);
 
-      // 2. LCD 출력
       lcd.setCursor(0, 0);
-      lcd.print("I=");
-      lcd.print(I_value, 5); // 공간 확보를 위해 소수점 5자리
-      lcd.print(" kgm^2 ");
+      lcd.print("I="); lcd.print(I_value, 5); lcd.print(" kgm^2 ");
 
       lcd.setCursor(0, 1);
       lcd.print("A:Reset B:Back");
 
-      // 3. 버튼 로직
-      if (A_pressed) 
-      {
-        mode = 0; // 처음부터 다시 시작
-        Serial.println("Reset to Mode 0");
+      if (A_pressed) {
+        mode = 0; // 완전 초기화
         updateLcdDisplay();
       }
-
-      if (B_pressed) 
-      {
-        mode = 5; // 재측정 하러 가기
-        // (주의: mode 5로 가면 step 3 상태일 수 있음. A/B 눌러서 리셋 필요)
+      if (B_pressed) {
+        // [수정] 측정했던 모드로 돌아가기
+        mode = measureSourceMode; 
+        
+        // 결과 화면 상태로 복귀
+        if(mode == 5) mode5_step = 3;
+        else          mode3_step = 3;
+        
         updateLcdDisplay();
       }
       break;
     }
   }
   
-  delay(10); 
+  // 측정 중(Mode 3 step 2)일 때는 루프 지연을 최소화하여 센서 미스를 방지
+  if (mode == 3 && mode3_step == 2) {
+      // No delay
+  } else {
+      delay(10);
+  }
 }
